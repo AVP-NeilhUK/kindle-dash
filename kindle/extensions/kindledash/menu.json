@@ -4,8 +4,8 @@
       "name": "Kindle Dash",
       "priority": 0,
       "items": [
-        { "name": "Test: show dashboard once", "action": "./once.sh" },
-        { "name": "Start dashboard (hold power 15s to exit)", "action": "./start.sh" }
+        { "name": "Test: show dashboard once", "priority": 1, "action": "/bin/sh", "params": "/mnt/us/extensions/kindledash/once.sh" },
+        { "name": "Start dashboard (hold power 15s to exit)", "priority": 2, "action": "/bin/sh", "params": "/mnt/us/extensions/kindledash/start.sh" }
       ]
     }
   ]
