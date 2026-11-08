@@ -238,30 +238,57 @@ def fuel():
     cid, sec = os.environ.get("FUEL_CLIENT_ID"), os.environ.get("FUEL_CLIENT_SECRET")
     if not (cid and sec):
         return None
-    from ukfuelfinder import FuelFinderClient
-    c = FuelFinderClient(client_id=cid, client_secret=sec, backward_compatible=False)
+    base = "https://www.fuel-finder.service.gov.uk/api/v1"
+    hdr = {**UA, "Accept": "application/json"}
+    r = requests.post(base + "/oauth/generate_access_token", json={"client_id": cid, "client_secret": sec},
+                      headers={**hdr, "Content-Type": "application/json"}, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError(f"token {r.status_code}: {r.text[:300]}")
+    tok = r.json()
+    tok = tok.get("data", tok)["access_token"]
+    auth = {**hdr, "Authorization": f"Bearer {tok}"}
+
+    def pages(path):
+        n = 1
+        while True:
+            resp = requests.get(base + path, headers=auth, params={"batch-number": n}, timeout=60)
+            if resp.status_code == 404:
+                return
+            resp.raise_for_status()
+            d = resp.json()
+            d = d.get("data", d) if isinstance(d, dict) else d
+            yield from d
+            if len(d) < 500:
+                return
+            n += 1
+
     near = {}
-    for i in c.get_all_pfs_info():
-        loc = getattr(i, "location", None)
-        if not loc or loc.latitude is None or getattr(i, "permanent_closure", False) or getattr(i, "temporary_closure", False):
+    for i in pages("/pfs"):
+        loc = i.get("location") or {}
+        la, lo = loc.get("latitude"), loc.get("longitude")
+        if la is None or lo is None or i.get("permanent_closure") or i.get("temporary_closure"):
             continue
-        dist = km(loc.latitude, loc.longitude)
-        if dist <= FUEL_RADIUS_KM:
-            near[i.node_id] = (i.brand_name or i.trading_name or "?").strip().title()
+        if km(float(la), float(lo)) <= FUEL_RADIUS_KM:
+            near[i["node_id"]] = (i.get("brand_name") or i.get("trading_name") or "?").strip().title()
     best = {}
-    for p in c.get_all_pfs_prices():
-        if p.node_id not in near:
+    for p in pages("/pfs/fuel-prices"):
+        if p.get("node_id") not in near:
             continue
-        for fp in p.fuel_prices or []:
-            ft, price = (fp.fuel_type or "").upper(), fp.price
+        for fp in p.get("fuel_prices") or []:
+            ft = (fp.get("fuel_type") or "").upper()
+            try:
+                price = float(fp.get("price") or 0)
+            except ValueError:
+                continue
             if not price:
                 continue
             if price < 10:          # pounds -> pence
                 price *= 100
             kind = "Unleaded" if ft.startswith("E10") else "Diesel" if ft.startswith("B7") and "PREM" not in ft and "SUPER" not in ft else None
             if kind and (kind not in best or price < best[kind][0]):
-                best[kind] = (price, near[p.node_id])
-    return [f"{k} {v[0]:.1f}p {v[1]}" for k, v in sorted(best.items(), key=lambda kv: kv[0] != "Unleaded")]
+                best[kind] = (price, near[p["node_id"]])
+    print(f"fuel: {len(near)} forecourts within {FUEL_RADIUS_KM} km, found {sorted(best)}")
+    return [f"{k} {v[0]:.1f}p {v[1]}" for k, v in sorted(best.items(), key=lambda kv: kv[0] != "Unleaded")] or None
 
 def news():
     for url in (NEWS_RSS, NEWS_FALLBACK):
