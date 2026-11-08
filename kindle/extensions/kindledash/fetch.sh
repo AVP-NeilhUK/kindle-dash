@@ -17,5 +17,5 @@ fi
 [ -f $DIR/dash.png ] && eips -f -g $DIR/dash.png
 BATT=$(lipc-get-prop com.lab126.powerd battLevel 2>/dev/null)
 if [ -n "$BATT" ] && [ "$BATT" -le "$LOW_BATTERY" ]; then
-  eips 1 39 " BATTERY ${BATT}% - CHARGE ME "
+  eips 1 39 " LOW BATTERY ${BATT} PERCENT - PLEASE CHARGE "
 fi
