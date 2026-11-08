@@ -20,15 +20,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pillow requests ukfuelfinder
+      - run: pip install pillow requests
       - name: Get Inter font
         run: mkdir -p fonts && curl -sSfL -o fonts/Inter.ttf "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/Inter%5Bopsz,wght%5D.ttf" || true
       - run: python render.py
         env:
           TOMTOM_KEY: ${{ secrets.TOMTOM_KEY }}
           RAIL_KEY: ${{ secrets.RAIL_KEY }}
-          FUEL_CLIENT_ID: ${{ secrets.FUEL_CLIENT_ID }}
-          FUEL_CLIENT_SECRET: ${{ secrets.FUEL_CLIENT_SECRET }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out
