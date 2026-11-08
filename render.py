@@ -24,6 +24,7 @@ WARNINGS_RSS = "https://www.metoffice.gov.uk/public/data/PWSCache/WarningsRSS/Re
 POWER_CSV = ("https://connecteddata.nationalgrid.co.uk/dataset/d6672e1e-c684-4cea-bb78-c7e5248b62a2/"
              "resource/a1365982-4e05-463c-8304-8323a2ba0ccd/download/live_detailed_power_cuts.csv")
 POWER_RADIUS_KM = 5
+FUEL_RADIUS_KM = 5
 MOTORWAYS = ("M5", "M6", "M42")
 MOTORWAY_BBOX = "-2.35,52.30,-1.55,52.70"     # West Midlands stretches only
 LOCAL_BBOX = "-2.13,52.41,-1.97,52.49"        # Halesowen and around
@@ -212,6 +213,10 @@ def roads():
     return ([describe(p) for p in mws[:3]] or [("M5", "M5, M6, M42: no reported problems")],
             [describe(p, True) for p in loc[:2]] or [("Local", "No road closures reported nearby")])
 
+def km(la, lo):
+    return 6371 * math.acos(min(1, math.sin(math.radians(LAT)) * math.sin(math.radians(la)) +
+                                math.cos(math.radians(LAT)) * math.cos(math.radians(la)) * math.cos(math.radians(lo - LON))))
+
 def power():
     text = get(POWER_CSV).text
     out = []
@@ -227,6 +232,36 @@ def power():
             etr = (r.get("etr") or "").strip()
             out.append(f"{kind} near {r.get('postcode', '').strip()} ({dist:.1f} km)" + (f", back by {etr[11:16] or etr}" if etr else ""))
     return out[:2] or [f"No power cuts within {POWER_RADIUS_KM} km"]
+
+def fuel():
+    """Cheapest unleaded (E10) and diesel (B7) within FUEL_RADIUS_KM, via the Fuel Finder scheme."""
+    cid, sec = os.environ.get("FUEL_CLIENT_ID"), os.environ.get("FUEL_CLIENT_SECRET")
+    if not (cid and sec):
+        return None
+    from ukfuelfinder import FuelFinderClient
+    c = FuelFinderClient(client_id=cid, client_secret=sec, backward_compatible=False)
+    near = {}
+    for i in c.get_all_pfs_info():
+        loc = getattr(i, "location", None)
+        if not loc or loc.latitude is None or getattr(i, "permanent_closure", False) or getattr(i, "temporary_closure", False):
+            continue
+        dist = km(loc.latitude, loc.longitude)
+        if dist <= FUEL_RADIUS_KM:
+            near[i.node_id] = (i.brand_name or i.trading_name or "?").strip().title()
+    best = {}
+    for p in c.get_all_pfs_prices():
+        if p.node_id not in near:
+            continue
+        for fp in p.fuel_prices or []:
+            ft, price = (fp.fuel_type or "").upper(), fp.price
+            if not price:
+                continue
+            if price < 10:          # pounds -> pence
+                price *= 100
+            kind = "Unleaded" if ft.startswith("E10") else "Diesel" if ft.startswith("B7") and "PREM" not in ft and "SUPER" not in ft else None
+            if kind and (kind not in best or price < best[kind][0]):
+                best[kind] = (price, near[p.node_id])
+    return [f"{k} {v[0]:.1f}p {v[1]}" for k, v in sorted(best.items(), key=lambda kv: kv[0] != "Unleaded")]
 
 def news():
     for url in (NEWS_RSS, NEWS_FALLBACK):
@@ -539,15 +574,20 @@ def build(now):
 
     # ---- roads
     r = section(roads)
-    p.label("Roads")
+    p.label("Roads and fuel")
     if r is None:
         p.text("Traffic unavailable", fill=GREY)
     else:
-        for badge, txt in r[0] + r[1]:
+        for badge, txt in (r[0] + r[1])[:4]:
             if not p.fits(p.lh("body")):
                 break
             bw_ = p.badge(M, p.y, badge or "?")
             p.text(txt, x=M + bw_ + 10)
+
+    fu = section(fuel)
+    if fu and p.fits(p.lh("body")):
+        bw_ = p.badge(M, p.y, "Fuel")
+        p.text("Cheapest nearby: " + "  ·  ".join(fu), x=M + bw_ + 10)
 
     # ---- trains
     p.label(f"Trains from {STATION_NAME}")
@@ -594,6 +634,7 @@ MOCK_DATA = {
     "roads": ([("M42", "Lane closed: M40 to A34 J4"), ("M6", "Hard shoulder closed: A38 J6 to M42 J4A"),
                ("M6", "Lane closed: Coleshill to A452 J5")],
               [("Local", "Closed for roadworks: Stourbridge Road (A458) to Pedmore Road (A4036)")]),
+    "fuel": ["Unleaded 131.9p Tesco", "Diesel 138.9p Asda"],
     "power": ["No power cuts within 5 km"],
     "news": ("Halesowen News", ["LIVE: Remembrance Sunday parades in Worcestershire and the Black Country",
                                 "Thousands gather in Dudley for Remembrance Sunday parade and service",
