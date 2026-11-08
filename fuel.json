@@ -1,0 +1,12 @@
+{
+    "diesel":  {
+                   "price":  158.7,
+                   "brand":  "Belcoo Service Station"
+               },
+    "forecourts":  8090,
+    "updated":  "2026-11-08T21:57:11.2193978Z",
+    "unleaded":  {
+                     "price":  142.9,
+                     "brand":  "Ravenspoint Trading Ltd"
+                 }
+}
