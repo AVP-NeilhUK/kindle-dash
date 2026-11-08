@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "name": "Kindle Dash",
+      "priority": 0,
+      "items": [
+        { "name": "Test: show dashboard once", "action": "./once.sh" },
+        { "name": "Start dashboard (hold power 15s to exit)", "action": "./start.sh" }
+      ]
+    }
+  ]
+}
