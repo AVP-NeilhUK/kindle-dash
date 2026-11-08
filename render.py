@@ -158,10 +158,11 @@ def tomtom(bbox):
     return [i["properties"] for i in j.get("incidents", [])]
 
 def describe(p):
-    road = ", ".join(p.get("roadNumbers") or []) or ""
+    road = ", ".join(r for r in (p.get("roadNumbers") or []) if not r.upper().startswith("E"))
     ev = "; ".join(e["description"] for e in (p.get("events") or []))
     where = f"{p.get('from', '')} to {p.get('to', '')}".strip(" to")
-    delay = f" (+{round(p['delay'] / 60)} min)" if p.get("delay") else ""
+    mins = round((p.get("delay") or 0) / 60)
+    delay = f" (+{mins} min)" if mins >= 1 else ""
     return f"{road} {ev}: {where}{delay}".strip()
 
 def roads():
@@ -174,8 +175,16 @@ def roads():
     rank = lambda p: (p.get("iconCategory") != 8, p.get("iconCategory") != 1, -(p.get("magnitudeOfDelay") or 0))
     mws = sorted([p for p in mw if is_mw(p) and p.get("iconCategory") in (1, 6, 7, 8, 9, 14)], key=rank)
     loc = sorted([p for p in tomtom(LOCAL_BBOX) if not is_mw(p) and p.get("iconCategory") in (1, 8)], key=rank)
-    return ([describe(p) for p in mws[:4]] or ["M5 / M6 / M42: no reported problems"],
-            [describe(p) for p in loc[:3]] or ["No road closures reported nearby"])
+    def dedupe(items):
+        seen, out = set(), []
+        for p in items:
+            k = (frozenset((p.get("from"), p.get("to"))), p.get("iconCategory"))
+            if k not in seen:
+                seen.add(k); out.append(p)
+        return out
+    mws, loc = dedupe(mws), dedupe(loc)
+    return ([describe(p) for p in mws[:3]] or ["M5 / M6 / M42: no reported problems"],
+            [describe(p) for p in loc[:2]] or ["No road closures reported nearby"])
 
 def power():
     text = get(POWER_CSV).text
@@ -351,7 +360,7 @@ def build(now):
     p.heading("Roads")
     if r:
         for s in r[0]:
-            p.text(s, max_lines=2)
+            p.text(s)
         p.y += 4
         for s in r[1]:
             p.text(s, max_lines=2)
@@ -368,7 +377,7 @@ def build(now):
     n = section(news)
     p.heading(n[0] if n else "News")
     for s in (n[1] if n else ["News unavailable"]):
-        p.text(s, max_lines=2)
+        p.text(s)
 
     # on this day
     o = section(on_this_day, now)
