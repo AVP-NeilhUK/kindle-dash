@@ -244,7 +244,10 @@ def fuel():
     age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(j["updated"].replace("Z", "+00:00"))
     if age > dt.timedelta(hours=24):
         return None
-    parts = [f"{k.title()} {j[k]['price']:.1f}p {j[k]['brand']}" for k in ("unleaded", "diesel") if j.get(k)]
+    def short(name):
+        name = re.sub(r"\b(ltd|limited|plc|llp|trading|services|retail|uk|group|petroleum|stores)\b\.?", "", name, flags=re.I)
+        return re.sub(r"\s+", " ", name).strip(" ,&-") or name
+    parts = [f"{k.title()} {j[k]['price']:.1f}p {short(j[k]['brand'])}" for k in ("unleaded", "diesel") if j.get(k)]
     if parts and age > dt.timedelta(hours=2):
         parts[-1] += f" (as of {dt.datetime.fromisoformat(j['updated'].replace('Z', '+00:00')).astimezone(TZ):%H:%M})"
     return parts or None
@@ -418,7 +421,7 @@ class Page:
 
     def badge(self, x, y, s):
         """Small black road-number tag."""
-        w = 52
+        w = max(52, self.tw(s, "badge") + 14)
         h = self.lh("body") - 2
         self.d.rounded_rectangle((x, y + 1, x + w, y + h), radius=5, fill=0)
         self.d.text((x + (w - self.tw(s, "badge")) / 2, y + 3), s, font=F["badge"], fill=255)
@@ -567,13 +570,13 @@ def build(now):
         for badge, txt in (r[0] + r[1])[:4]:
             if not p.fits(p.lh("body")):
                 break
-            bw_ = p.badge(M, p.y, badge or "?")
-            p.text(txt, x=M + bw_ + 10)
+            p.badge(M, p.y, badge or "?")
+            p.text(txt, x=M + 76)
 
     fu = section(fuel)
     if fu and p.fits(p.lh("body")):
-        bw_ = p.badge(M, p.y, "Fuel")
-        p.text("Cheapest nearby: " + "  ·  ".join(fu), x=M + bw_ + 10)
+        p.badge(M, p.y, "Fuel")
+        p.text("Cheapest: " + "  ·  ".join(fu), x=M + 76)
 
     # ---- trains
     p.label(f"Trains from {STATION_NAME}")
