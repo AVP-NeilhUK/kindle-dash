@@ -3,6 +3,8 @@ on:
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
+  push:
+    paths: [fuel.json]   # every fuel upload from the PC also refreshes the dashboard
 permissions:
   contents: write
   pages: write
