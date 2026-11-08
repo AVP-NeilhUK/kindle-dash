@@ -4,11 +4,11 @@
 Runs on GitHub Actions every 30 minutes. Each section fails on its own:
 if a source is down, that section says so and the rest still renders.
 
-Optional secrets (sections show "add key" without them):
+Optional secrets (sections show a note without them):
   TOMTOM_KEY  - motorway + local road incidents (free, developer.tomtom.com)
   RAIL_KEY    - Cradley Heath departures (free, raildata.org.uk, Live Departure Board product)
 """
-import csv, io, math, os, sys, datetime as dt
+import csv, io, math, os, re, sys, datetime as dt
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 import requests
@@ -32,27 +32,38 @@ LOCAL_BBOX = "-2.13,52.41,-1.97,52.49"        # Halesowen and around
 BIN_ANCHOR = dt.date(2026, 11, 12)
 
 W, H = 758, 1024
-M = 22                    # side margin
-FOOTER = 48               # bottom strip; left side kept blank for the Kindle's battery warning
+M = 26                    # side margin
+FOOTER = 40               # bottom strip; left side kept blank for the Kindle's battery warning
 TZ = ZoneInfo("Europe/London")
 UA = {"User-Agent": "kindle-dash/1.0 (personal e-ink dashboard)"}
 MOCK = "--mock" in sys.argv
+GREY, LIGHT = 90, 200     # secondary text, hairlines
 
 # ---------------------------------------------------------------- fonts
-def font(bold=False, size=20):
-    names = ["DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"]
-    for d in ("/usr/share/fonts/truetype/dejavu/", ""):
-        for n in names:
-            try:
-                return ImageFont.truetype(d + n, size)
-            except OSError:
-                pass
-    return ImageFont.load_default()
+# Inter is downloaded by the workflow into fonts/. DejaVu is the fallback.
+INTER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "Inter.ttf")
+
+def font(size, weight=400):
+    try:
+        f = ImageFont.truetype(INTER, size)
+        try:
+            f.set_variation_by_axes([min(32, max(14, size)), weight])
+        except Exception:
+            pass
+        return f
+    except OSError:
+        name = "DejaVuSans-Bold.ttf" if weight >= 600 else "DejaVuSans.ttf"
+        try:
+            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/" + name, size)
+        except OSError:
+            return ImageFont.load_default()
 
 F = {
-    "date": font(True, 30), "tod": font(False, 24), "h": font(True, 22),
-    "big": font(True, 64), "body": font(False, 20), "bodyb": font(True, 20),
-    "small": font(False, 17), "pct": font(True, 16),
+    "day": font(38, 700), "date": font(22, 400), "pill": font(18, 600),
+    "label": font(14, 700), "temp": font(76, 700), "cond": font(24, 600),
+    "body": font(18, 400), "bodym": font(18, 600), "bodyb": font(18, 700),
+    "small": font(16, 400), "badge": font(15, 700), "year": font(26, 700),
+    "alert": font(19, 700), "binbig": font(24, 700),
 }
 
 def get(url, **kw):
@@ -68,16 +79,32 @@ WMO = {0: "Clear", 1: "Mostly clear", 2: "Partly cloudy", 3: "Overcast", 45: "Fo
        81: "Showers", 82: "Heavy showers", 85: "Snow showers", 86: "Heavy snow showers",
        95: "Thunderstorms", 96: "Thunder and hail", 99: "Thunder and hail"}
 
+def icon_kind(code, night=False):
+    if code in (0, 1):
+        return "moon" if night else "sun"
+    if code == 2:
+        return "partly_night" if night else "partly"
+    if code == 3:
+        return "cloud"
+    if code in (45, 48):
+        return "fog"
+    if 51 <= code <= 57:
+        return "drizzle"
+    if 71 <= code <= 77 or code in (85, 86):
+        return "snow"
+    if code >= 95:
+        return "thunder"
+    return "rain"
+
 def weather(now):
     j = get("https://api.open-meteo.com/v1/forecast", params={
         "latitude": LAT, "longitude": LON, "timezone": "Europe/London", "forecast_days": 2,
         "wind_speed_unit": "mph",
-        "current": "temperature_2m,weather_code,wind_speed_10m",
+        "current": "temperature_2m,weather_code,is_day",
         "hourly": "precipitation_probability,precipitation",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset,wind_speed_10m_max",
     }).json()
     c, d, h = j["current"], j["daily"], j["hourly"]
-    # rain timing for the rest of today
     wet = lambda i: (h["precipitation_probability"][i] or 0) >= 50 or (h["precipitation"][i] or 0) >= 0.3
     today = now.date().isoformat()
     idx = [i for i, t in enumerate(h["time"]) if t.startswith(today) and int(t[11:13]) >= now.hour]
@@ -89,10 +116,10 @@ def weather(now):
     else:
         start = next((i for i in idx if wet(i)), None)
         rain = f"Dry until {h['time'][start][11:16]}, then rain likely" if start else "Dry for the rest of the day"
-    day = lambda k: {"code": WMO.get(d["weather_code"][k], "?"), "hi": round(d["temperature_2m_max"][k]),
-                     "lo": round(d["temperature_2m_min"][k]), "rain": d["precipitation_probability_max"][k] or 0,
-                     "wind": round(d["wind_speed_10m_max"][k])}
-    return {"now_t": round(c["temperature_2m"]), "now_c": WMO.get(c["weather_code"], "?"),
+    day = lambda k: {"code": d["weather_code"][k], "text": WMO.get(d["weather_code"][k], "?"),
+                     "hi": round(d["temperature_2m_max"][k]), "lo": round(d["temperature_2m_min"][k]),
+                     "rain": d["precipitation_probability_max"][k] or 0, "wind": round(d["wind_speed_10m_max"][k])}
+    return {"now_t": round(c["temperature_2m"]), "now_code": c["weather_code"], "night": not c.get("is_day", 1),
             "today": day(0), "tomorrow": day(1), "rain": rain,
             "sunrise": d["sunrise"][0][11:16], "sunset": d["sunset"][0][11:16]}
 
@@ -108,45 +135,43 @@ def moon(now):
     return names[int((p * 8) + 0.5) % 8]
 
 def bins(now):
-    """Returns (alert, line). Alert is set on Wednesday (tomorrow) and Thursday (today)."""
+    """state: 'tonight' (Wednesday), 'today' (Thursday morning) or 'next'."""
     today = now.date()
     thu = today + dt.timedelta(days=(3 - today.weekday()) % 7)
+    if today.weekday() == 3 and now.hour >= 12:
+        thu += dt.timedelta(days=7)
     weeks = (thu - BIN_ANCHOR).days // 7
-    which = "Black + Green + Food" if weeks % 2 == 0 else "Blue + Food"
+    items = ["Black", "Green", "Food"] if weeks % 2 == 0 else ["Blue", "Food"]
     note = ""
     try:
         hols = get("https://www.gov.uk/bank-holidays.json").json()["england-and-wales"]["events"]
         monday = thu - dt.timedelta(days=3)
-        for e in hols:
-            if monday <= dt.date.fromisoformat(e["date"]) <= thu:
-                note = f" (bank holiday week, check the date)"
+        if any(monday <= dt.date.fromisoformat(e["date"]) <= thu for e in hols):
+            note = "Bank holiday week, check the date"
     except Exception:
         pass
-    if (today.month == 12 and today.day >= 18) or (today.month == 1 and today.day <= 6):
-        note = " (Christmas schedule, check the date)"
-    if today.weekday() == 2:
-        return f"BINS OUT TONIGHT: {which}{note}", None
-    if today.weekday() == 3 and now.hour < 12:
-        return f"BIN DAY TODAY: {which}{note}", None
-    return None, f"Next bins: Thu {thu.day} {thu:%b}, {which}{note}"
+    if (thu.month == 12 and thu.day >= 18) or (thu.month == 1 and thu.day <= 6):
+        note = "Christmas schedule, check the date"
+    state = "tonight" if today.weekday() == 2 else "today" if (today.weekday() == 3 and now.hour < 12) else "next"
+    return {"state": state, "date": thu, "items": items, "note": note}
 
 def trains():
     key = os.environ.get("RAIL_KEY")
     if not key:
-        return None, ["Add RAIL_KEY secret to show departures"]
+        return None
     url = f"https://api1.raildata.org.uk/1010-live-departure-board-dep/LDBWS/api/20220120/GetDepartureBoard/{STATION}"
-    j = requests.get(url, headers={"x-apikey": key, **UA}, params={"numRows": 6}, timeout=25)
-    j.raise_for_status()
-    j = j.json()
+    r = requests.get(url, headers={"x-apikey": key, **UA}, params={"numRows": 6}, timeout=25)
+    r.raise_for_status()
+    j = r.json()
     rows = []
-    for s in (j.get("trainServices") or [])[:5]:
+    for s in (j.get("trainServices") or [])[:4]:
         dest = (s.get("destination") or [{}])[0].get("locationName", "?")
         etd = "Cancelled" if s.get("isCancelled") else s.get("etd", "")
         rows.append((s.get("std", ""), dest, etd))
-    msg = (j.get("nrccMessages") or [{}])[0].get("Value", "") if j.get("nrccMessages") else ""
-    import re
-    msg = re.sub("<[^>]+>", "", msg).strip()
-    return rows, ([msg] if msg else [])
+    msg = ""
+    if j.get("nrccMessages"):
+        msg = re.sub("<[^>]+>", "", (j["nrccMessages"][0] or {}).get("Value", "")).strip()
+    return rows, msg
 
 def tomtom(bbox):
     key = os.environ.get("TOMTOM_KEY")
@@ -157,24 +182,24 @@ def tomtom(bbox):
         "key": key, "bbox": bbox, "fields": fields, "language": "en-GB", "timeValidityFilter": "present"}).json()
     return [i["properties"] for i in j.get("incidents", [])]
 
-def describe(p):
-    road = ", ".join(r for r in (p.get("roadNumbers") or []) if not r.upper().startswith("E"))
+def describe(p, local=False):
+    """Returns (badge, text)."""
+    roads = [r for r in (p.get("roadNumbers") or []) if not r.upper().startswith("E")]
+    badge = roads[0] if roads else ("Local" if local else "")
     ev = "; ".join(e["description"] for e in (p.get("events") or []))
-    where = f"{p.get('from', '')} to {p.get('to', '')}".strip(" to")
+    ev = ev.replace("Closed; Roadworks", "Closed for roadworks")
+    where = " to ".join(x for x in (p.get("from"), p.get("to")) if x)
     mins = round((p.get("delay") or 0) / 60)
-    delay = f" (+{mins} min)" if mins >= 1 else ""
-    return f"{road} {ev}: {where}{delay}".strip()
+    delay = f", +{mins} min" if mins >= 1 else ""
+    return badge, f"{ev}: {where}{delay}" if where else f"{ev}{delay}"
 
 def roads():
     mw = tomtom(MOTORWAY_BBOX)
     if mw is None:
-        return ["Add TOMTOM_KEY secret to show motorways"], ["Add TOMTOM_KEY secret to show closures"]
+        return None
     def is_mw(p):
         return any(r.upper().replace(" TOLL", "") in MOTORWAYS for r in (p.get("roadNumbers") or []))
-    # worst first: closures (8), accidents (1), then by delay size
     rank = lambda p: (p.get("iconCategory") != 8, p.get("iconCategory") != 1, -(p.get("magnitudeOfDelay") or 0))
-    mws = sorted([p for p in mw if is_mw(p) and p.get("iconCategory") in (1, 6, 7, 8, 9, 14)], key=rank)
-    loc = sorted([p for p in tomtom(LOCAL_BBOX) if not is_mw(p) and p.get("iconCategory") in (1, 8)], key=rank)
     def dedupe(items):
         seen, out = set(), []
         for p in items:
@@ -182,9 +207,10 @@ def roads():
             if k not in seen:
                 seen.add(k); out.append(p)
         return out
-    mws, loc = dedupe(mws), dedupe(loc)
-    return ([describe(p) for p in mws[:3]] or ["M5 / M6 / M42: no reported problems"],
-            [describe(p) for p in loc[:2]] or ["No road closures reported nearby"])
+    mws = dedupe(sorted([p for p in mw if is_mw(p) and p.get("iconCategory") in (1, 6, 7, 8, 9, 14)], key=rank))
+    loc = dedupe(sorted([p for p in tomtom(LOCAL_BBOX) if not is_mw(p) and p.get("iconCategory") in (1, 8)], key=rank))
+    return ([describe(p) for p in mws[:3]] or [("M5", "M5, M6, M42: no reported problems")],
+            [describe(p, True) for p in loc[:2]] or [("Local", "No road closures reported nearby")])
 
 def power():
     text = get(POWER_CSV).text
@@ -197,9 +223,9 @@ def power():
         dist = 6371 * math.acos(min(1, math.sin(math.radians(LAT)) * math.sin(math.radians(la)) +
                                     math.cos(math.radians(LAT)) * math.cos(math.radians(la)) * math.cos(math.radians(lo - LON))))
         if dist <= POWER_RADIUS_KM and not (r.get("date_of_restoration") or "").strip():
-            kind = "Planned" if (r.get("planned") or "").lower() in ("true", "yes", "1") else "Power cut"
+            kind = "Planned cut" if (r.get("planned") or "").lower() in ("true", "yes", "1") else "Power cut"
             etr = (r.get("etr") or "").strip()
-            out.append(f"{kind} {r.get('postcode', '').strip()} ({dist:.1f} km)" + (f", back by {etr[11:16] or etr}" if etr else ""))
+            out.append(f"{kind} near {r.get('postcode', '').strip()} ({dist:.1f} km)" + (f", back by {etr[11:16] or etr}" if etr else ""))
     return out[:2] or [f"No power cuts within {POWER_RADIUS_KM} km"]
 
 def news():
@@ -218,11 +244,80 @@ def on_this_day(now):
     j = get(f"https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/selected/{now:%m}/{now:%d}").json()
     ev = j.get("selected") or []
     e = ev[now.timetuple().tm_yday % len(ev)]        # one pick per day, so it doesn't flip every refresh
-    return f"{e['year']}: {e['text']}"
+    return str(e["year"]), e["text"]
 
 def time_of_day(h):
     return ("early" if h < 7 else "morning" if h < 12 else "afternoon" if h < 15
             else "late afternoon" if h < 18 else "evening")
+
+# ---------------------------------------------------------------- icons
+def draw_icon(kind, size):
+    """Black-and-white weather icon, drawn at 4x and scaled down for smooth edges."""
+    S = size * 4
+    im = Image.new("L", (S, S), 255)
+    d = ImageDraw.Draw(im)
+    lw = max(4, S // 16)
+
+    def circle(cx, cy, r, fill=None, outline=0, width=lw):
+        d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fill, outline=outline, width=width)
+
+    def sun(cx, cy, r):
+        circle(cx, cy, r, fill=255)
+        for i in range(8):
+            a = i * math.pi / 4
+            d.line((cx + math.cos(a) * r * 1.45, cy + math.sin(a) * r * 1.45,
+                    cx + math.cos(a) * r * 1.95, cy + math.sin(a) * r * 1.95), fill=0, width=lw)
+
+    def moon_(cx, cy, r):
+        circle(cx, cy, r, fill=0, outline=0)
+        d.ellipse((cx - r * 0.45, cy - r * 1.25, cx + r * 1.55, cy + r * 0.75), fill=255)
+
+    def cloud(x0, y0, w):
+        # outline drawn by stacking a black shape and a slightly smaller white one
+        def shape(inset, fill):
+            h = w * 0.62
+            parts = [(x0 + w * 0.30, y0 + h * 0.55, w * 0.22), (x0 + w * 0.55, y0 + h * 0.40, w * 0.28),
+                     (x0 + w * 0.78, y0 + h * 0.62, w * 0.19)]
+            for cx, cy, r in parts:
+                d.ellipse((cx - r + inset, cy - r + inset, cx + r - inset, cy + r - inset), fill=fill)
+            d.rounded_rectangle((x0 + w * 0.08 + inset, y0 + h * 0.55 + inset, x0 + w * 0.97 - inset,
+                                 y0 + h * 0.95 - inset), radius=w * 0.18, fill=fill)
+        shape(0, 0)
+        shape(lw, 255)
+        return y0 + w * 0.62 * 0.95
+
+    if kind == "sun":
+        sun(S / 2, S / 2, S * 0.22)
+    elif kind == "moon":
+        moon_(S / 2, S / 2, S * 0.30)
+    elif kind in ("partly", "partly_night"):
+        (sun if kind == "partly" else moon_)(S * 0.36, S * 0.34, S * (0.16 if kind == "partly" else 0.2))
+        cloud(S * 0.22, S * 0.36, S * 0.74)
+    else:
+        bottom = cloud(S * 0.08, S * 0.10, S * 0.84)
+        if kind == "rain":
+            for i in range(3):
+                x = S * (0.30 + i * 0.2)
+                d.line((x, bottom + S * 0.06, x - S * 0.07, bottom + S * 0.24), fill=0, width=lw)
+        elif kind == "drizzle":
+            for i in range(3):
+                for j in range(2):
+                    circle(S * (0.30 + i * 0.2) - j * S * 0.05, bottom + S * (0.09 + j * 0.13), lw * 0.8, fill=0)
+        elif kind == "snow":
+            for i in range(3):
+                cx, cy, r = S * (0.28 + i * 0.22), bottom + S * 0.15, S * 0.07
+                for a in (0, math.pi / 3, 2 * math.pi / 3):
+                    d.line((cx - math.cos(a) * r, cy - math.sin(a) * r, cx + math.cos(a) * r, cy + math.sin(a) * r),
+                           fill=0, width=max(3, lw * 2 // 3))
+        elif kind == "thunder":
+            x, y = S * 0.5, bottom + S * 0.02
+            d.polygon([(x + S * 0.04, y), (x - S * 0.10, y + S * 0.16), (x - S * 0.01, y + S * 0.16),
+                       (x - S * 0.06, y + S * 0.30), (x + S * 0.10, y + S * 0.11), (x + S * 0.01, y + S * 0.11)], fill=0)
+        elif kind == "fog":
+            for i in range(3):
+                y = bottom + S * (0.06 + i * 0.085)
+                d.line((S * (0.14 + 0.06 * (i % 2)), y, S * (0.86 - 0.06 * (i % 2)), y), fill=0, width=lw)
+    return im.resize((size, size), Image.LANCZOS)
 
 # ---------------------------------------------------------------- drawing
 class Page:
@@ -232,49 +327,98 @@ class Page:
         self.y = 0
         self.limit = H - FOOTER
 
+    def tw(self, s, f):
+        return self.d.textlength(s, font=F[f])
+
+    def lh(self, f):
+        a, b = F[f].getmetrics()
+        return a + b
+
     def wrap(self, text, f, width, max_lines):
         words, lines, cur = text.split(), [], ""
         for w in words:
             t = (cur + " " + w).strip()
-            if self.d.textlength(t, font=f) <= width:
+            if self.tw(t, f) <= width:
                 cur = t
             else:
-                lines.append(cur); cur = w
+                if cur:
+                    lines.append(cur)
+                cur = w
         if cur:
             lines.append(cur)
         if len(lines) > max_lines:
             lines = lines[:max_lines]
-            while self.d.textlength(lines[-1] + "...", font=f) > width:
-                lines[-1] = lines[-1][:-1]
+            while lines[-1] and self.tw(lines[-1] + "...", f) > width:
+                lines[-1] = lines[-1][:-1].rstrip()
             lines[-1] += "..."
         return lines
 
-    def text(self, s, f="body", x=M, max_lines=1, gap=4, fill=0, width=None):
+    def fits(self, h):
+        return self.y + h <= self.limit
+
+    def text(self, s, f="body", x=M, max_lines=1, gap=3, fill=0, width=None):
         width = width or W - x - M
-        for line in self.wrap(s, F[f], width, max_lines):
-            h = F[f].getbbox("Ag")[3]
-            if self.y + h > self.limit:
-                return
+        for line in self.wrap(s, f, width, max_lines):
+            h = self.lh(f)
+            if not self.fits(h):
+                return False
             self.d.text((x, self.y), line, font=F[f], fill=fill)
             self.y += h + gap
+        return True
 
-    def heading(self, s):
-        self.y += 6
-        if self.y + 30 > self.limit:
-            self.y = self.limit; return
-        self.d.text((M, self.y), s.upper(), font=F["h"], fill=0)
-        self.y += 28
-        self.d.line((M, self.y, W - M, self.y), fill=0, width=2)
-        self.y += 7
+    def label(self, s, top_gap=10):
+        """Small letter-spaced section label with a hairline running to the margin."""
+        self.y += top_gap
+        if not self.fits(40):
+            self.y = self.limit
+            return False
+        x = M
+        for ch in s.upper():
+            self.d.text((x, self.y), ch, font=F["label"], fill=GREY)
+            x += self.tw(ch, "label") + 2.2
+        mid = self.y + self.lh("label") // 2 + 1
+        self.d.line((x + 10, mid, W - M, mid), fill=LIGHT, width=1)
+        self.y += self.lh("label") + 6
+        return True
+
+    def rule(self, gap=14):
+        self.y += gap
+        self.d.line((M, self.y, W - M, self.y), fill=LIGHT, width=1)
+
+    def pill(self, x, y, s, f="pill", inverted=False, pad=12, h=None):
+        h = h or self.lh(f) + 4
+        w = self.tw(s, f) + pad * 2
+        if inverted:
+            self.d.rounded_rectangle((x, y, x + w, y + h), radius=h // 2, fill=0)
+        else:
+            self.d.rounded_rectangle((x, y, x + w, y + h), radius=h // 2, outline=0, width=2)
+        self.d.text((x + pad, y + 1), s, font=F[f], fill=255 if inverted else 0)
+        return w
+
+    def badge(self, x, y, s):
+        """Small black road-number tag."""
+        w = 52
+        h = self.lh("body") - 2
+        self.d.rounded_rectangle((x, y + 1, x + w, y + h), radius=5, fill=0)
+        self.d.text((x + (w - self.tw(s, "badge")) / 2, y + 3), s, font=F["badge"], fill=255)
+        return w
 
     def alert(self, s):
-        lines = self.wrap(s, F["bodyb"], W - 2 * M - 24, 2)
-        h = len(lines) * 26 + 10
-        self.d.rectangle((M, self.y, W - M, self.y + h), fill=0)
-        yy = self.y + 5
+        lines = self.wrap(s, "alert", W - 2 * M - 64, 2)
+        h = len(lines) * 26 + 18
+        if not self.fits(h):
+            return
+        self.d.rounded_rectangle((M, self.y, W - M, self.y + h), radius=14, fill=0)
+        # warning triangle
+        cx, cy = M + 26, self.y + h / 2
+        self.d.polygon([(cx, cy - 12), (cx - 13, cy + 10), (cx + 13, cy + 10)], fill=255)
+        self.d.rectangle((cx - 1.5, cy - 4, cx + 1.5, cy + 3), fill=0)
+        self.d.rectangle((cx - 1.5, cy + 5, cx + 1.5, cy + 7), fill=0)
+        yy = self.y + 9
         for l in lines:
-            self.d.text((M + 12, yy), l, font=F["bodyb"], fill=255); yy += 26
-        self.y += h + 6
+            self.d.text((M + 50, yy), l, font=F["alert"], fill=255)
+            yy += 26
+        self.y += h + 10
 
 def section(fn, *a):
     if MOCK:
@@ -288,125 +432,174 @@ def section(fn, *a):
 def build(now):
     p = Page()
     d = p.d
-    # header: date, time of day, day progress
-    p.y = 14
-    d.text((M, p.y), f"{now:%A} {now.day} {now:%B}".upper(), font=F["date"], fill=0)
-    tod = time_of_day(now.hour)
-    d.text((W - M - d.textlength(tod, font=F["tod"]), p.y + 6), tod, font=F["tod"], fill=0)
-    p.y += 46
-    pct = (now.hour * 60 + now.minute) / 1440
-    d.rectangle((M, p.y, W - M, p.y + 22), outline=0, width=2)
-    d.rectangle((M, p.y, M + int((W - 2 * M) * pct), p.y + 22), fill=0)
-    label = f"{round(pct * 100)}%"
-    lx = M + int((W - 2 * M) * pct) + 6
-    if lx + 50 > W - M:
-        d.text((lx - 56, p.y + 2), label, font=F["pct"], fill=255)
-    else:
-        d.text((lx, p.y + 2), label, font=F["pct"], fill=0)
-    p.y += 32
 
-    # warnings + bins alert go to the top when they apply
+    # ---- header: day, date, time-of-day pill, day progress
+    p.y = 18
+    d.text((M, p.y), f"{now:%A}", font=F["day"], fill=0)
+    dx = M + p.tw(f"{now:%A}", "day") + 12
+    d.text((dx, p.y + 14), f"{now.day} {now:%B}", font=F["date"], fill=GREY)
+    tod = time_of_day(now.hour)
+    pw = p.tw(tod, "pill") + 24
+    p.pill(W - M - pw, p.y + 8, tod)
+    p.y += 58
+    pct = (now.hour * 60 + now.minute) / 1440
+    bw = W - 2 * M - 52
+    d.rounded_rectangle((M, p.y, M + bw, p.y + 10), radius=5, fill=225)
+    d.rounded_rectangle((M, p.y, M + max(10, int(bw * pct)), p.y + 10), radius=5, fill=0)
+    lbl = f"{round(pct * 100)}%"
+    d.text((W - M - p.tw(lbl, "small"), p.y - 5), lbl, font=F["small"], fill=GREY)
+    p.y += 22
+
     for wtxt in section(warnings) or []:
         p.alert(wtxt)
-    alert, binline = bins(now) if not MOCK else MOCK_DATA["bins"]
-    if alert:
-        p.alert(alert)
+    pw_ = section(power)
+    if pw_ and not pw_[0].startswith("No power cuts"):
+        for s_ in pw_:
+            p.alert(s_)
 
-    # weather
+    # ---- weather
     w = section(weather, now)
-    p.heading("Weather")
+    p.label("Weather", top_gap=4)
     if w:
         top = p.y
+        icon = draw_icon(icon_kind(w["now_code"], w["night"]), 86)
+        p.img.paste(icon, (M - 4, top))
         t = f"{w['now_t']}°"
-        d.text((M, top - 6), t, font=F["big"], fill=0)
-        x = M + d.textlength(t, font=F["big"]) + 22
-        p.y = top
-        p.text(f"Now: {w['now_c']}", "bodyb", x=x)
-        tw = w["today"]
-        p.text(f"Today {tw['hi']}° / {tw['lo']}°, rain {tw['rain']}%, wind {tw['wind']} mph", x=x)
-        p.text(w["rain"], x=x)
-        p.y = max(p.y, top + 72)
+        tx = M + 104
+        d.text((tx, top - 8), t, font=F["temp"], fill=0)
+        cx = tx + p.tw(t, "temp") + 18
+        tdy = w["today"]
+        d.text((cx, top + 6), WMO.get(w["now_code"], ""), font=F["cond"], fill=0)
+        d.text((cx, top + 40), f"High {tdy['hi']}°  Low {tdy['lo']}°", font=F["body"], fill=0)
+        d.text((cx, top + 66), f"Rain {tdy['rain']}%  Wind {tdy['wind']} mph", font=F["body"], fill=GREY)
+        p.y = top + 94
+        p.text(w["rain"], "bodym")
+        # tomorrow row
         tm = w["tomorrow"]
-        p.text(f"Tomorrow: {tm['code']}, {tm['hi']}° / {tm['lo']}°, rain {tm['rain']}%, wind {tm['wind']} mph")
-        p.text(f"Sunrise {w['sunrise']}  |  Sunset {w['sunset']}  |  {moon(now)}", "small", fill=60)
+        p.y += 4
+        ty = p.y
+        p.img.paste(draw_icon(icon_kind(tm["code"]), 34), (M, ty - 3))
+        d.text((M + 44, ty + 2), "Tomorrow", font=F["bodyb"], fill=0)
+        d.text((M + 44 + p.tw("Tomorrow", "bodyb") + 10, ty + 2),
+               f"{tm['text']}, {tm['hi']}° / {tm['lo']}°, rain {tm['rain']}%", font=F["body"], fill=0)
+        p.y = ty + 34
+        p.text(f"Sunrise {w['sunrise']}  ·  Sunset {w['sunset']}  ·  {moon(now)}", "small", fill=GREY)
     else:
         p.text("Weather unavailable")
-    if binline:
-        p.text(binline, "small", fill=60)
 
-    # trains
-    p.heading(f"Trains from {STATION_NAME}")
+    # ---- bins (own section, highlighted the day before and the morning of)
+    b = bins(now) if not MOCK else MOCK_DATA["bins"]
+    p.label("Bins")
+    names = {"Black": "Black bin", "Green": "Green bin", "Blue": "Blue bin", "Food": "Food caddy"}
+    if b["state"] in ("tonight", "today"):
+        head = "Bins out tonight" if b["state"] == "tonight" else "Bin day today"
+        h = 88 if b["note"] else 66
+        if p.fits(h):
+            d.rounded_rectangle((M, p.y, W - M, p.y + h), radius=16, fill=0)
+            d.text((M + 18, p.y + 7), head, font=F["binbig"], fill=255)
+            x = M + 18
+            for it in b["items"]:
+                lw_ = p.tw(names[it], "bodym") + 20
+                d.rounded_rectangle((x, p.y + 37, x + lw_, p.y + 59), radius=11, fill=255)
+                d.text((x + 10, p.y + 37), names[it], font=F["bodym"], fill=0)
+                x += lw_ + 8
+            if b["note"]:
+                d.text((M + 18, p.y + 68), b["note"], font=F["small"], fill=255)
+            p.y += h
+    else:
+        y = p.y
+        d.text((M, y), f"Thursday {b['date'].day} {b['date']:%b}", font=F["bodyb"], fill=0)
+        x = M + p.tw(f"Thursday {b['date'].day} {b['date']:%b}", "bodyb") + 14
+        for it in b["items"]:
+            x += p.pill(x, y - 2, names[it], f="body", pad=10) + 8
+        p.y = y + 32
+        if b["note"]:
+            p.text(b["note"], "small", fill=GREY)
+
+    # ---- news
+    n = section(news)
+    p.label(n[0] if n else "News")
+    for s in (n[1] if n else ["News unavailable"]):
+        if not p.fits(p.lh("body")):
+            break
+        d.rectangle((M, p.y + 10, M + 5, p.y + 15), fill=0)
+        p.text(s, x=M + 16)
+
+    # ---- on this day
+    o = section(on_this_day, now)
+    p.label("On this day")
+    if o:
+        year, txt = o
+        y = p.y
+        d.text((M, y - 3), year, font=F["year"], fill=0)
+        p.text(txt, x=M + 84, max_lines=2)
+        p.y = max(p.y, y + 34)
+    else:
+        p.text("Unavailable")
+
+    # ---- roads
+    r = section(roads)
+    p.label("Roads")
+    if r is None:
+        p.text("Traffic unavailable", fill=GREY)
+    else:
+        for badge, txt in r[0] + r[1]:
+            if not p.fits(p.lh("body")):
+                break
+            bw_ = p.badge(M, p.y, badge or "?")
+            p.text(txt, x=M + bw_ + 10)
+
+    # ---- trains
+    p.label(f"Trains from {STATION_NAME}")
     tr = section(trains)
     if tr is None:
-        p.text("Departures unavailable")
+        p.text("Waiting for rail key" if not os.environ.get("RAIL_KEY") and not MOCK else "Departures unavailable",
+               fill=GREY)
     else:
-        rows, msgs = tr
-        for std, dest, etd in rows or []:
+        rows, msg = tr
+        for std, dest, etd in rows:
+            if not p.fits(p.lh("body")):
+                break
             y = p.y
             d.text((M, y), std, font=F["bodyb"], fill=0)
-            status_f = F["bodyb"] if etd not in ("On time",) else F["body"]
-            sw = d.textlength(etd, font=status_f)
-            d.text((W - M - sw, y), etd, font=status_f, fill=0)
-            dl = p.wrap(dest, F["body"], W - 2 * M - 80 - sw - 12, 1)[0]
-            d.text((M + 80, y), dl, font=F["body"], fill=0)
-            p.y += 26
-        if rows == []:
-            p.text("No departures listed")
-        for m in msgs:
-            p.text(m, "small", max_lines=2, fill=60)
+            if etd in ("On time", ""):
+                sw = p.tw("On time", "body")
+                d.text((W - M - sw, y), "On time", font=F["body"], fill=GREY)
+            else:
+                sw = p.tw(etd, "badge") + 20
+                d.rounded_rectangle((W - M - sw, y + 1, W - M, y + 24), radius=11, fill=0)
+                d.text((W - M - sw + 10, y + 4), etd, font=F["badge"], fill=255)
+            dl = p.wrap(dest, "body", W - 2 * M - 74 - sw - 12, 1)[0]
+            d.text((M + 74, y), dl, font=F["body"], fill=0)
+            p.y += p.lh("body") + 6
+        if not rows:
+            p.text("No departures listed", fill=GREY)
+        if msg:
+            p.text(msg, "small", max_lines=1, fill=GREY)
 
-    # roads
-    r = section(roads)
-    p.heading("Roads")
-    if r:
-        for s in r[0]:
-            p.text(s)
-        p.y += 4
-        for s in r[1]:
-            p.text(s, max_lines=2)
-    else:
-        p.text("Traffic unavailable")
-
-    # power
-    pw = section(power)
-    p.heading("Power")
-    for s in pw or ["Power cut data unavailable"]:
-        p.text(s)
-
-    # news
-    n = section(news)
-    p.heading(n[0] if n else "News")
-    for s in (n[1] if n else ["News unavailable"]):
-        p.text(s)
-
-    # on this day
-    o = section(on_this_day, now)
-    p.heading("On this day")
-    p.text(o or "Unavailable", max_lines=3)
-
-    # footer: left blank for the Kindle's own battery warning
-    upd = f"Updated {now:%H:%M}"
-    d.text((W - M - d.textlength(upd, font=F["small"]), H - 28), upd, font=F["small"], fill=0)
+    # ---- footer: left kept blank for the Kindle's own battery warning
+    upd = (pw_[0] + "  ·  " if pw_ and pw_[0].startswith("No power cuts") else "") + f"Updated {now:%H:%M}"
+    d.text((W - M - p.tw(upd, "small"), H - 28), upd, font=F["small"], fill=GREY)
     return p.img
 
 MOCK_DATA = {
-    "warnings": ["Yellow warning of rain affecting West Midlands"],
-    "bins": ("BINS OUT TONIGHT: Black + Green + Food", None),
-    "weather": {"now_t": 9, "now_c": "Partly cloudy", "rain": "Dry until 15:00, then rain likely",
-                "today": {"code": "Showers", "hi": 11, "lo": 5, "rain": 70, "wind": 18},
-                "tomorrow": {"code": "Light rain", "hi": 10, "lo": 4, "rain": 60, "wind": 14},
-                "sunrise": "07:12", "sunset": "16:22"},
+    "warnings": ["Yellow warning of fog affecting West Midlands"],
+    "bins": {"state": "tonight", "date": dt.date(2026, 11, 12), "items": ["Black", "Green", "Food"], "note": ""},
+    "weather": {"now_t": 6, "now_code": 2, "night": False, "rain": "Dry until 15:00, then rain likely",
+                "today": {"code": 80, "text": "Light showers", "hi": 10, "lo": 4, "rain": 70, "wind": 18},
+                "tomorrow": {"code": 45, "text": "Fog", "hi": 9, "lo": 2, "rain": 10, "wind": 6},
+                "sunrise": "07:17", "sunset": "16:26"},
     "trains": ([("07:41", "Birmingham Snow Hill", "On time"), ("07:52", "Kidderminster", "07:58"),
-                ("08:11", "Stratford-upon-Avon", "On time"), ("08:22", "Worcester Foregate Street", "Cancelled"),
-                ("08:41", "Birmingham Snow Hill", "On time")], []),
-    "roads": (["M5 Queuing traffic: J3 Quinton to J2 Oldbury (+12 min)", "M6 Lane closed: J7 to J6 Spaghetti Junction"],
-              ["A458 Road closed: Mucklow Hill to Long Lane"]),
+                ("08:11", "Stratford-upon-Avon", "On time"), ("08:22", "Worcester Foregate Street", "Cancelled")], ""),
+    "roads": ([("M42", "Lane closed: M40 to A34 J4"), ("M6", "Hard shoulder closed: A38 J6 to M42 J4A"),
+               ("M6", "Lane closed: Coleshill to A452 J5")],
+              [("Local", "Closed for roadworks: Stourbridge Road (A458) to Pedmore Road (A4036)")]),
     "power": ["No power cuts within 5 km"],
-    "news": ("Halesowen News", ["Plans lodged for new homes on former factory site in Halesowen",
-                                "Bonfire night display draws record crowd to Leasowes Park",
-                                "Roadworks on Hagley Road set to finish next week",
-                                "Local school celebrates outstanding Ofsted report"]),
-    "on_this_day": "1895: Wilhelm Röntgen discovers X-rays while experimenting with cathode-ray tubes.",
+    "news": ("Halesowen News", ["LIVE: Remembrance Sunday parades in Worcestershire and the Black Country",
+                                "Thousands gather in Dudley for Remembrance Sunday parade and service",
+                                "Police appeal after staff member assaulted during shop robbery",
+                                "Severn Valley Railway announces special guest for 40th diesel gala"]),
+    "on_this_day": ("1971", "The English rock group Led Zeppelin released their fourth album, which became one of the best-selling albums worldwide."),
 }
 
 if __name__ == "__main__":
