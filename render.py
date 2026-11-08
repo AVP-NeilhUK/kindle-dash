@@ -8,7 +8,7 @@ Optional secrets (sections show a note without them):
   TOMTOM_KEY  - motorway + local road incidents (free, developer.tomtom.com)
   RAIL_KEY    - Cradley Heath departures (free, raildata.org.uk, Live Departure Board product)
 """
-import csv, io, math, os, re, sys, datetime as dt
+import csv, io, json, math, os, re, sys, datetime as dt
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 import requests
@@ -234,61 +234,20 @@ def power():
     return out[:2] or [f"No power cuts within {POWER_RADIUS_KM} km"]
 
 def fuel():
-    """Cheapest unleaded (E10) and diesel (B7) within FUEL_RADIUS_KM, via the Fuel Finder scheme."""
-    cid, sec = os.environ.get("FUEL_CLIENT_ID"), os.environ.get("FUEL_CLIENT_SECRET")
-    if not (cid and sec):
+    """Cheapest nearby fuel, from fuel.json. Fuel Finder blocks GitHub's servers,
+    so a script on Neil's PC (pc/fuel.ps1) fetches the prices and saves that file here."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fuel.json")
+    if not os.path.exists(path):
         return None
-    base = "https://www.fuel-finder.service.gov.uk/api/v1"
-    hdr = {**UA, "Accept": "application/json"}
-    r = requests.post(base + "/oauth/generate_access_token", json={"client_id": cid, "client_secret": sec},
-                      headers={**hdr, "Content-Type": "application/json"}, timeout=30)
-    if r.status_code != 200:
-        raise RuntimeError(f"token {r.status_code}: {r.text[:300]}")
-    tok = r.json()
-    tok = tok.get("data", tok)["access_token"]
-    auth = {**hdr, "Authorization": f"Bearer {tok}"}
-
-    def pages(path):
-        n = 1
-        while True:
-            resp = requests.get(base + path, headers=auth, params={"batch-number": n}, timeout=60)
-            if resp.status_code == 404:
-                return
-            resp.raise_for_status()
-            d = resp.json()
-            d = d.get("data", d) if isinstance(d, dict) else d
-            yield from d
-            if len(d) < 500:
-                return
-            n += 1
-
-    near = {}
-    for i in pages("/pfs"):
-        loc = i.get("location") or {}
-        la, lo = loc.get("latitude"), loc.get("longitude")
-        if la is None or lo is None or i.get("permanent_closure") or i.get("temporary_closure"):
-            continue
-        if km(float(la), float(lo)) <= FUEL_RADIUS_KM:
-            near[i["node_id"]] = (i.get("brand_name") or i.get("trading_name") or "?").strip().title()
-    best = {}
-    for p in pages("/pfs/fuel-prices"):
-        if p.get("node_id") not in near:
-            continue
-        for fp in p.get("fuel_prices") or []:
-            ft = (fp.get("fuel_type") or "").upper()
-            try:
-                price = float(fp.get("price") or 0)
-            except ValueError:
-                continue
-            if not price:
-                continue
-            if price < 10:          # pounds -> pence
-                price *= 100
-            kind = "Unleaded" if ft.startswith("E10") else "Diesel" if ft.startswith("B7") and "PREM" not in ft and "SUPER" not in ft else None
-            if kind and (kind not in best or price < best[kind][0]):
-                best[kind] = (price, near[p["node_id"]])
-    print(f"fuel: {len(near)} forecourts within {FUEL_RADIUS_KM} km, found {sorted(best)}")
-    return [f"{k} {v[0]:.1f}p {v[1]}" for k, v in sorted(best.items(), key=lambda kv: kv[0] != "Unleaded")] or None
+    with open(path, encoding="utf-8-sig") as f:
+        j = json.load(f)
+    age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(j["updated"].replace("Z", "+00:00"))
+    if age > dt.timedelta(hours=24):
+        return None
+    parts = [f"{k.title()} {j[k]['price']:.1f}p {j[k]['brand']}" for k in ("unleaded", "diesel") if j.get(k)]
+    if parts and age > dt.timedelta(hours=2):
+        parts[-1] += f" (as of {dt.datetime.fromisoformat(j['updated'].replace('Z', '+00:00')).astimezone(TZ):%H:%M})"
+    return parts or None
 
 def news():
     for url in (NEWS_RSS, NEWS_FALLBACK):
