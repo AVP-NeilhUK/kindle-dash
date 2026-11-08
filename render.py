@@ -245,7 +245,7 @@ def fuel():
     if age > dt.timedelta(hours=24):
         return None
     def short(name):
-        name = re.sub(r"\b(ltd|limited|plc|llp|trading|services|retail|uk|group|petroleum|stores)\b\.?", "", name, flags=re.I)
+        name = re.sub(r"\b(ltd|limited|plc|llp|trading|services?|stations?|filling|garage|retail|uk|group|petroleum|stores)\b\.?", "", name, flags=re.I)
         return re.sub(r"\s+", " ", name).strip(" ,&-") or name
     parts = [f"{k.title()} {j[k]['price']:.1f}p {short(j[k]['brand'])}" for k in ("unleaded", "diesel") if j.get(k)]
     if parts and age > dt.timedelta(hours=2):
