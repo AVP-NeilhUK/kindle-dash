@@ -64,7 +64,7 @@ F = {
     "label": font(14, 700), "temp": font(76, 700), "cond": font(24, 600),
     "body": font(18, 400), "bodym": font(18, 600), "bodyb": font(18, 700),
     "small": font(16, 400), "badge": font(15, 700), "year": font(26, 700),
-    "alert": font(19, 700), "binbig": font(24, 700),
+    "alert": font(19, 700), "binbig": font(24, 700), "binhead": font(32, 700),
 }
 
 def get(url, **kw):
@@ -343,6 +343,28 @@ def draw_icon(kind, size):
                 d.line((S * (0.14 + 0.06 * (i % 2)), y, S * (0.86 - 0.06 * (i % 2)), y), fill=0, width=lw)
     return im.resize((size, size), Image.LANCZOS)
 
+def draw_bin(kind, size):
+    """Wheelie bin (or food caddy) icon, shaded by bin colour, drawn at 4x for smooth edges."""
+    S = size * 4
+    im = Image.new("L", (S, S), 255)
+    d = ImageDraw.Draw(im)
+    lw = S // 18
+    shade = {"Black": 40, "Green": 120, "Blue": 185, "Food": 90}[kind]
+    if kind == "Food":
+        # small caddy with handle
+        d.rounded_rectangle((S * .22, S * .38, S * .78, S * .92), radius=S * .06, fill=shade, outline=0, width=lw)
+        d.rounded_rectangle((S * .18, S * .30, S * .82, S * .40), radius=S * .03, fill=shade, outline=0, width=lw)
+        d.arc((S * .30, S * .10, S * .70, S * .50), 180, 360, fill=0, width=lw)
+    else:
+        d.polygon([(S * .20, S * .22), (S * .80, S * .22), (S * .74, S * .88), (S * .26, S * .88)], fill=shade, outline=0)
+        d.line([(S * .20, S * .22), (S * .26, S * .88), (S * .74, S * .88), (S * .80, S * .22)], fill=0, width=lw)
+        d.rounded_rectangle((S * .14, S * .12, S * .86, S * .23), radius=S * .03, fill=shade, outline=0, width=lw)   # lid
+        d.rectangle((S * .42, S * .07, S * .58, S * .13), fill=0)                                                   # handle
+        for cx in (S * .30, S * .70):
+            d.ellipse((cx - S * .08, S * .82, cx + S * .08, S * .98), fill=0)                                        # wheels
+            d.ellipse((cx - S * .03, S * .87, cx + S * .03, S * .93), fill=255)
+    return im.resize((size, size), Image.LANCZOS)
+
 # ---------------------------------------------------------------- drawing
 class Page:
     def __init__(self):
@@ -514,31 +536,35 @@ def build(now):
     # ---- bins (own section, highlighted the day before and the morning of)
     b = bins(now) if not MOCK else MOCK_DATA["bins"]
     p.label("Bins")
-    names = {"Black": "Black bin", "Green": "Green bin", "Blue": "Blue bin", "Food": "Food caddy"}
-    if b["state"] in ("tonight", "today"):
-        head = "Bins out tonight" if b["state"] == "tonight" else "Bin day today"
-        h = 88 if b["note"] else 66
-        if p.fits(h):
-            d.rounded_rectangle((M, p.y, W - M, p.y + h), radius=16, fill=0)
-            d.text((M + 18, p.y + 7), head, font=F["binbig"], fill=255)
-            x = M + 18
-            for it in b["items"]:
-                lw_ = p.tw(names[it], "bodym") + 20
-                d.rounded_rectangle((x, p.y + 37, x + lw_, p.y + 59), radius=11, fill=255)
-                d.text((x + 10, p.y + 37), names[it], font=F["bodym"], fill=0)
-                x += lw_ + 8
-            if b["note"]:
-                d.text((M + 18, p.y + 68), b["note"], font=F["small"], fill=255)
-            p.y += h
-    else:
-        y = p.y
-        d.text((M, y), f"Thursday {b['date'].day} {b['date']:%b}", font=F["bodyb"], fill=0)
-        x = M + p.tw(f"Thursday {b['date'].day} {b['date']:%b}", "bodyb") + 14
-        for it in b["items"]:
-            x += p.pill(x, y - 2, names[it], f="body", pad=10) + 8
-        p.y = y + 32
+    names = {"Black": "Black", "Green": "Green", "Blue": "Blue", "Food": "Food"}
+    alert = b["state"] in ("tonight", "today")
+    h = 104 + (22 if b["note"] else 0)
+    if p.fits(h):
+        top = p.y
+        fg = 255 if alert else 0
+        if alert:
+            d.rounded_rectangle((M, top, W - M, top + h), radius=18, fill=0)
+        days = (b["date"] - now.date()).days
+        head = ("Bins out tonight" if b["state"] == "tonight" else "Bin day today") if alert else f"{b['date']:%A} {b['date'].day} {b['date']:%b}"
+        sub = "Collected tomorrow morning" if b["state"] == "tonight" else "Collection today" if alert else \
+              ("tomorrow" if days == 1 else f"in {days} days")
+        tx = M + (20 if alert else 0)
+        d.text((tx, top + 18), head, font=F["binhead"], fill=fg)
+        d.text((tx, top + 58), sub, font=F["body"], fill=fg if alert else GREY)
+        # bin icons, right-aligned
+        x = W - M - (20 if alert else 0)
+        for it in reversed(b["items"]):
+            ic = draw_bin(it, 64)
+            x -= 64
+            if alert:
+                d.rounded_rectangle((x - 6, top + 8, x + 70, top + 96), radius=12, fill=255)
+            p.img.paste(ic, (x, top + 10))
+            lbl = names[it]
+            d.text((x + 32 - p.tw(lbl, "badge") / 2, top + 76), lbl, font=F["badge"], fill=0)
+            x -= 20
         if b["note"]:
-            p.text(b["note"], "small", fill=GREY)
+            d.text((tx, top + 104), b["note"], font=F["small"], fill=fg if alert else GREY)
+        p.y = top + h
 
     # ---- news
     n = section(news)
@@ -548,18 +574,6 @@ def build(now):
             break
         d.rectangle((M, p.y + 10, M + 5, p.y + 15), fill=0)
         p.text(s, x=M + 16)
-
-    # ---- on this day
-    o = section(on_this_day, now)
-    p.label("On this day")
-    if o:
-        year, txt = o
-        y = p.y
-        d.text((M, y - 3), year, font=F["year"], fill=0)
-        p.text(txt, x=M + 84, max_lines=2)
-        p.y = max(p.y, y + 34)
-    else:
-        p.text("Unavailable")
 
     # ---- roads
     r = section(roads)
