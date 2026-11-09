@@ -12,7 +12,7 @@ import csv, io, json, math, os, re, sys, datetime as dt
 import xml.etree.ElementTree as ET
 from zoneinfo import ZoneInfo
 import requests
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFont, ImageOps
 
 # ---------------------------------------------------------------- settings
 LAT, LON = 52.4502, -2.0509          # Halesowen
@@ -32,12 +32,21 @@ LOCAL_BBOX = "-2.13,52.41,-1.97,52.49"        # Halesowen and around
 # black (refuse) + green (garden); the following Thursday is blue (recycling).
 BIN_ANCHOR = dt.date(2026, 11, 12)
 
+# Front light (Paperwhite 2: 0 = off, 24 = full), following daylight.
+FRONTLIGHT = {"night": 0, "dawn": 12, "twilight": 8, "day": 0, "evening": 10}
+NIGHT_FROM, NIGHT_UNTIL = 23, 6       # hours: light off overnight
+
+# Painting of the day, faded behind the dashboard (Met Museum public-domain collection).
+ART_QUERY = "landscape"        # what to search the Met's European Paintings for
+ART_STRENGTH = 0.22             # 0 = invisible, 1 = full strength
+
 W, H = 758, 1024
 M = 26                    # side margin
-FOOTER = 40               # bottom strip; left side kept blank for the Kindle's battery warning
+FOOTER = 62               # bottom strip; left side kept blank for the Kindle's battery warning
 TZ = ZoneInfo("Europe/London")
 UA = {"User-Agent": "kindle-dash/1.0 (personal e-ink dashboard)"}
 MOCK = "--mock" in sys.argv
+LAST_WEATHER = None
 GREY, LIGHT = 90, 200     # secondary text, hairlines
 
 # ---------------------------------------------------------------- fonts
@@ -269,6 +278,40 @@ def on_this_day(now):
     ev = j.get("selected") or []
     e = ev[now.timetuple().tm_yday % len(ev)]        # one pick per day, so it doesn't flip every refresh
     return str(e["year"]), e["text"]
+
+def light_level(now, w):
+    """Front-light level for the Kindle, from the time of day and today's sunrise/sunset."""
+    if now.hour >= NIGHT_FROM or now.hour < NIGHT_UNTIL:
+        return FRONTLIGHT["night"]
+    if not w:
+        return FRONTLIGHT["evening"] if now.hour >= 17 else FRONTLIGHT["dawn"] if now.hour < 9 else FRONTLIGHT["day"]
+    t = now.hour * 60 + now.minute
+    rise = int(w["sunrise"][:2]) * 60 + int(w["sunrise"][3:])
+    sets = int(w["sunset"][:2]) * 60 + int(w["sunset"][3:])
+    if t < rise - 30:
+        return FRONTLIGHT["dawn"]
+    if t < rise + 30 or sets - 30 <= t < sets + 30:
+        return FRONTLIGHT["twilight"]
+    if t < sets - 30:
+        return FRONTLIGHT["day"]
+    return FRONTLIGHT["evening"]
+
+def art(now):
+    """Painting of the day: (greyscale image, caption). Same painting all day."""
+    base = "https://collectionapi.metmuseum.org/public/collection/v1"
+    ids = get(f"{base}/search", params={"q": ART_QUERY, "hasImages": "true", "departmentId": 11}).json().get("objectIDs") or []
+    if not ids:
+        raise RuntimeError("no artworks found")
+    start = (now.timetuple().tm_yday * 37) % len(ids)
+    for k in range(12):                      # skip any without a usable public-domain image
+        o = get(f"{base}/objects/{ids[(start + k) % len(ids)]}").json()
+        url = o.get("primaryImageSmall") or o.get("primaryImage")
+        if o.get("isPublicDomain") and url:
+            img = Image.open(io.BytesIO(get(url).content)).convert("L")
+            who = o.get("artistDisplayName") or "Unknown artist"
+            when = o.get("objectDate") or ""
+            return img, f"{o.get('title', 'Untitled')} · {who}" + (f", {when}" if when else "")
+    raise RuntimeError("no public-domain image found")
 
 def time_of_day(h):
     return ("early" if h < 7 else "morning" if h < 12 else "afternoon" if h < 15
@@ -505,6 +548,8 @@ def build(now):
 
     # ---- weather
     w = section(weather, now)
+    global LAST_WEATHER
+    LAST_WEATHER = w
     p.label("Weather", top_gap=4)
     if w:
         top = p.y
@@ -620,10 +665,22 @@ def build(now):
         if msg:
             p.text(msg, "small", max_lines=1, fill=GREY)
 
-    # ---- footer: left kept blank for the Kindle's own battery warning
+    # ---- painting of the day, faded behind everything
+    a = section(art, now)
+    img = p.img
+    if a:
+        pic, caption = a
+        pic = ImageEnhance.Contrast(ImageOps.fit(pic, (W, H), Image.LANCZOS)).enhance(1.15)
+        faded = pic.point(lambda v: int(255 - (255 - v) * ART_STRENGTH))
+        img = ImageChops.darker(faded, p.img)
+        d = ImageDraw.Draw(img)
+    # ---- footer: painting note on the left, power + update time on the right
     upd = (pw_[0] + "  ·  " if pw_ and pw_[0].startswith("No power cuts") else "") + f"Updated {now:%H:%M}"
     d.text((W - M - p.tw(upd, "small"), H - 28), upd, font=F["small"], fill=GREY)
-    return p.img
+    if a:
+        note = p.wrap("Painting: " + caption, "small", W - 2 * M, 1)[0]
+        d.text((M, H - 52), note, font=F["small"], fill=GREY)
+    return img
 
 MOCK_DATA = {
     "warnings": ["Yellow warning of fog affecting West Midlands"],
@@ -638,6 +695,8 @@ MOCK_DATA = {
                ("M6", "Lane closed: Coleshill to A452 J5")],
               [("Local", "Closed for roadworks: Stourbridge Road (A458) to Pedmore Road (A4036)")]),
     "fuel": ["Unleaded 131.9p Tesco", "Diesel 138.9p Asda"],
+    "art": (Image.open("/tmp/art/wave.jpg").convert("L") if os.path.exists("/tmp/art/wave.jpg") else Image.new("L", (10, 10), 255),
+            "The Great Wave off Kanagawa · Katsushika Hokusai, ca. 1830–32"),
     "power": ["No power cuts within 5 km"],
     "news": ("Halesowen News", ["LIVE: Remembrance Sunday parades in Worcestershire and the Black Country",
                                 "Thousands gather in Dudley for Remembrance Sunday parade and service",
@@ -653,4 +712,6 @@ if __name__ == "__main__":
     img = build(now)
     os.makedirs("out", exist_ok=True)
     img.save("out/dash.png", optimize=True)
+    with open("out/light.txt", "w") as f:
+        f.write(str(light_level(now, LAST_WEATHER)))
     print("wrote out/dash.png")
