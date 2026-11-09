@@ -174,7 +174,7 @@ def trains():
     key = os.environ.get("RAIL_KEY")
     if not key:
         return None
-    url = f"https://api1.raildata.org.uk/1010-live-departure-board-dep/LDBWS/api/20220120/GetDepartureBoard/{STATION}"
+    url = f"https://api1.raildata.org.uk/1010-live-departure-board-dep1_2/LDBWS/api/20220120/GetDepartureBoard/{STATION}"
     r = requests.get(url, headers={"x-apikey": key, **UA}, params={"numRows": 6}, timeout=25)
     r.raise_for_status()
     j = r.json()
@@ -192,10 +192,17 @@ def tomtom(bbox):
     key = os.environ.get("TOMTOM_KEY")
     if not key:
         return None
-    fields = "{incidents{properties{iconCategory,magnitudeOfDelay,events{description},from,to,delay,roadNumbers}}}"
+    fields = "{incidents{geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description},from,to,delay,roadNumbers}}}"
     j = get("https://api.tomtom.com/traffic/services/5/incidentDetails", params={
         "key": key, "bbox": bbox, "fields": fields, "language": "en-GB", "timeValidityFilter": "present"}).json()
-    return [i["properties"] for i in j.get("incidents", [])]
+    out = []
+    for i in j.get("incidents", []):
+        p = i["properties"]
+        c = (i.get("geometry") or {}).get("coordinates") or []
+        pts = [c] if c and isinstance(c[0], (int, float)) else c
+        p["km"] = min((km(pt[1], pt[0]) for pt in pts), default=99)   # nearest point to home
+        out.append(p)
+    return out
 
 def describe(p, local=False):
     """Returns (badge, text)."""
@@ -223,9 +230,14 @@ def roads():
                 seen.add(k); out.append(p)
         return out
     mws = dedupe(sorted([p for p in mw if is_mw(p) and p.get("iconCategory") in (1, 6, 7, 8, 9, 14)], key=rank))
-    loc = dedupe(sorted([p for p in tomtom(LOCAL_BBOX) if not is_mw(p) and p.get("iconCategory") in (1, 8)], key=rank))
+    loc = [p for p in tomtom(LOCAL_BBOX) if not is_mw(p) and p.get("iconCategory") in (1, 6, 7, 8, 9)]
+    for p in sorted(loc, key=lambda p: p["km"]):       # listed in the build log, for checking
+        print(f'local: {p["km"]:.1f} km  cat {p.get("iconCategory")}  {describe(p, True)[1]}')
+    # closures first, then nearest
+    loc = dedupe(sorted(loc, key=lambda p: (p.get("iconCategory") != 8, p["km"])))
+    loc = [p for p in loc if p.get("iconCategory") in (1, 8) or p["km"] <= 1.5]
     return ([describe(p) for p in mws[:3]] or [("M5", "M5, M6, M42: no reported problems")],
-            [describe(p, True) for p in loc[:2]] or [("Local", "No road closures reported nearby")])
+            [describe(p, True) for p in loc[:3]] or [("Local", "No road closures reported nearby")])
 
 def km(la, lo):
     return 6371 * math.acos(min(1, math.sin(math.radians(LAT)) * math.sin(math.radians(la)) +
@@ -643,7 +655,7 @@ def build(now):
     if r is None:
         p.text("Traffic unavailable", fill=GREY)
     else:
-        for badge, txt in (r[0] + r[1])[:4]:
+        for badge, txt in r[0][:2] + r[1][:3]:
             if not p.fits(p.lh("body")):
                 break
             p.badge(M, p.y, badge or "?")
