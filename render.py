@@ -531,13 +531,27 @@ def build(now):
     pw = p.tw(tod, "pill") + 24
     p.pill(W - M - pw, p.y + 8, tod)
     p.y += 58
-    pct = (now.hour * 60 + now.minute) / 1440
-    bw = W - 2 * M - 52
-    d.rounded_rectangle((M, p.y, M + bw, p.y + 10), radius=5, fill=225)
-    d.rounded_rectangle((M, p.y, M + max(10, int(bw * pct)), p.y + 10), radius=5, fill=0)
-    lbl = f"{round(pct * 100)}%"
-    d.text((W - M - p.tw(lbl, "small"), p.y - 5), lbl, font=F["small"], fill=GREY)
-    p.y += 22
+    # day timeline: midnight to midnight, night shaded from today's sunrise/sunset, dot = now
+    w = section(weather, now)
+    global LAST_WEATHER
+    LAST_WEATHER = w
+    x0, x1, ty = M + 6, W - M - 6, p.y + 10
+    span = x1 - x0
+    xm = lambda mins: x0 + span * mins / 1440
+    rise, sets = (7 * 60, 17 * 60)
+    if w:
+        rise = int(w["sunrise"][:2]) * 60 + int(w["sunrise"][3:])
+        sets = int(w["sunset"][:2]) * 60 + int(w["sunset"][3:])
+    d.rounded_rectangle((x0, ty - 5, xm(rise), ty + 5), radius=5, fill=170)      # night before sunrise
+    d.rounded_rectangle((xm(sets), ty - 5, x1, ty + 5), radius=5, fill=170)      # night after sunset
+    d.line((xm(rise), ty, xm(sets), ty), fill=0, width=2)                         # daylight
+    for hh, lab in ((6, "6am"), (12, "noon"), (18, "6pm")):
+        xx = xm(hh * 60)
+        d.line((xx, ty + 7, xx, ty + 12), fill=GREY, width=2)
+        d.text((xx - p.tw(lab, "small") / 2, ty + 13), lab, font=F["small"], fill=GREY)
+    nx = xm(now.hour * 60 + now.minute)
+    d.ellipse((nx - 9, ty - 9, nx + 9, ty + 9), fill=0, outline=255, width=3)
+    p.y += 42
 
     for wtxt in section(warnings) or []:
         p.alert(wtxt)
@@ -547,9 +561,6 @@ def build(now):
             p.alert(s_)
 
     # ---- weather
-    w = section(weather, now)
-    global LAST_WEATHER
-    LAST_WEATHER = w
     p.label("Weather", top_gap=4)
     if w:
         top = p.y
