@@ -42,7 +42,7 @@ ART_STRENGTH = 0.22             # 0 = invisible, 1 = full strength
 
 W, H = 758, 1024
 M = 26                    # side margin
-FOOTER = 62               # bottom strip; left side kept blank for the Kindle's battery warning
+FOOTER = 70               # bottom strip: painting note, power status, update time
 TZ = ZoneInfo("Europe/London")
 UA = {"User-Agent": "kindle-dash/1.0 (personal e-ink dashboard)"}
 MOCK = "--mock" in sys.argv
@@ -73,7 +73,7 @@ F = {
     "label": font(14, 700), "temp": font(76, 700), "cond": font(24, 600),
     "body": font(18, 400), "bodym": font(18, 600), "bodyb": font(18, 700),
     "small": font(16, 400), "badge": font(15, 700), "year": font(26, 700),
-    "alert": font(19, 700), "binbig": font(24, 700), "binhead": font(32, 700),
+    "alert": font(19, 700), "power": font(22, 700), "tmhead": font(20, 700), "binbig": font(24, 700), "binhead": font(32, 700),
 }
 
 def get(url, **kw):
@@ -179,7 +179,7 @@ def trains():
     r.raise_for_status()
     j = r.json()
     rows = []
-    for s in (j.get("trainServices") or [])[:4]:
+    for s in (j.get("trainServices") or [])[:6]:
         dest = (s.get("destination") or [{}])[0].get("locationName", "?")
         etd = "Cancelled" if s.get("isCancelled") else s.get("etd", "")
         rows.append((s.get("std", ""), dest, etd))
@@ -592,17 +592,20 @@ def build(now):
         d.text((cx, top + 6), WMO.get(w["now_code"], ""), font=F["cond"], fill=0)
         d.text((cx, top + 40), f"High {tdy['hi']}°  Low {tdy['lo']}°", font=F["body"], fill=0)
         d.text((cx, top + 66), f"Rain {tdy['rain']}%  Wind {tdy['wind']} mph", font=F["body"], fill=GREY)
+        split = M + (W - 2 * M) * 2 // 3          # today gets 2/3, tomorrow 1/3
         p.y = top + 94
-        p.text(w["rain"], "bodym")
-        # tomorrow row
+        p.text(w["rain"], "bodym", max_lines=2, width=split - M - 12)
+        # tomorrow column
         tm = w["tomorrow"]
-        p.y += 4
-        ty = p.y
-        p.img.paste(draw_icon(icon_kind(tm["code"]), 34), (M, ty - 3))
-        d.text((M + 44, ty + 2), "Tomorrow", font=F["bodyb"], fill=0)
-        d.text((M + 44 + p.tw("Tomorrow", "bodyb") + 10, ty + 2),
-               f"{tm['text']}, {tm['hi']}° / {tm['lo']}°, rain {tm['rain']}%", font=F["body"], fill=0)
-        p.y = ty + 34
+        rx = split + 18
+        d.line((split, top, split, p.y - 4), fill=LIGHT, width=2)
+        d.text((rx, top - 2), "Tomorrow", font=F["tmhead"], fill=0)
+        p.img.paste(draw_icon(icon_kind(tm["code"]), 56), (rx, top + 28))
+        d.text((rx + 66, top + 32), f"{tm['hi']}° / {tm['lo']}°", font=F["bodyb"], fill=0)
+        d.text((rx + 66, top + 56), f"Rain {tm['rain']}%", font=F["body"], fill=GREY)
+        tt = p.wrap(tm["text"], "body", W - M - rx, 1)[0]
+        d.text((rx, top + 92), tt, font=F["body"], fill=0)
+        p.y = max(p.y, top + 120) + 2
         p.text(f"Sunrise {w['sunrise']}  ·  Sunset {w['sunset']}  ·  {moon(now)}", "small", fill=GREY)
     else:
         p.text("Weather unavailable")
@@ -640,22 +643,13 @@ def build(now):
             d.text((tx, top + 104), b["note"], font=F["small"], fill=fg if alert else GREY)
         p.y = top + h
 
-    # ---- news
-    n = section(news)
-    p.label(n[0] if n else "News")
-    for s in (n[1] if n else ["News unavailable"]):
-        if not p.fits(p.lh("body")):
-            break
-        d.rectangle((M, p.y + 10, M + 5, p.y + 15), fill=0)
-        p.text(s, x=M + 16)
-
     # ---- roads
     r = section(roads)
     p.label("Roads and fuel")
     if r is None:
         p.text("Traffic unavailable", fill=GREY)
     else:
-        for badge, txt in r[0][:2] + r[1][:3]:
+        for badge, txt in r[1][:3] + r[0][:2]:
             if not p.fits(p.lh("body")):
                 break
             p.badge(M, p.y, badge or "?")
@@ -664,7 +658,7 @@ def build(now):
     fu = section(fuel)
     if fu and p.fits(p.lh("body")):
         p.badge(M, p.y, "Fuel")
-        p.text("Cheapest: " + "  ·  ".join(fu), x=M + 76)
+        p.text("Cheapest: " + "  ·  ".join(fu), x=M + 76, max_lines=2)
 
     # ---- trains
     p.label(f"Trains from {STATION_NAME}")
@@ -704,18 +698,20 @@ def build(now):
         img = ImageChops.darker(faded, p.img)
         d = ImageDraw.Draw(img)
     # ---- footer: painting note on the left, power + update time on the right
-    upd = (pw_[0] + "        " if pw_ and pw_[0].startswith("No power cuts") else "") + f"Updated {now:%H:%M}"
+    # power status, bold on the left
+    ptxt = pw_[0] if pw_ else "Power cut info unavailable"
+    d.text((M, H - 34), ptxt, font=F["power"], fill=0)
+    upd = f"Updated {now:%H:%M}"
     ux = W - M - p.tw(upd, "small")
     d.text((ux, H - 28), upd, font=F["small"], fill=GREY)
     # refresh symbol: tapping the screen refreshes
-    tail = f"Updated {now:%H:%M}"
-    cx, cy, r = W - M - p.tw(tail, "small") - 14, H - 18, 7
+    cx, cy, r = ux - 14, H - 18, 7
     d.arc((cx - r, cy - r, cx + r, cy + r), 50, 330, fill=GREY, width=2)
     ax, ay = cx + r * math.cos(math.radians(50)), cy + r * math.sin(math.radians(50))
     d.polygon([(ax - 1, ay - 6), (ax + 5, ay + 1), (ax - 4, ay + 3)], fill=GREY)
     if a:
         note = p.wrap("Painting: " + caption, "small", W - 2 * M, 1)[0]
-        d.text((M, H - 52), note, font=F["small"], fill=GREY)
+        d.text((M, H - 60), note, font=F["small"], fill=GREY)
     return img
 
 MOCK_DATA = {
@@ -729,8 +725,8 @@ MOCK_DATA = {
                 ("08:11", "Stratford-upon-Avon", "On time"), ("08:22", "Worcester Foregate Street", "Cancelled")], ""),
     "roads": ([("M42", "Lane closed: M40 to A34 J4"), ("M6", "Hard shoulder closed: A38 J6 to M42 J4A"),
                ("M6", "Lane closed: Coleshill to A452 J5")],
-              [("Local", "Closed for roadworks: Stourbridge Road (A458) to Pedmore Road (A4036)")]),
-    "fuel": ["Unleaded 131.9p Tesco", "Diesel 138.9p Asda"],
+              [("B4183", "Closed: Hagley Road at Albert Road"), ("Local", "Closed for roadworks: Stourbridge Road (A458) to Pedmore Road (A4036)")]),
+    "fuel": ["Unleaded 131.9p Asda Halesowen Superstore", "Diesel 138.9p Tesco Extra Merry Hill"],
     "art": (Image.open("/tmp/art/wave.jpg").convert("L") if os.path.exists("/tmp/art/wave.jpg") else Image.new("L", (10, 10), 255),
             "The Great Wave off Kanagawa · Katsushika Hokusai, ca. 1830–32"),
     "power": ["No power cuts within 5 km"],
