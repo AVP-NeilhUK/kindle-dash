@@ -135,7 +135,12 @@ def weather(now):
 
 def warnings():
     root = ET.fromstring(get(WARNINGS_RSS).content)
-    return [i.findtext("title", "").strip() for i in root.iter("item")][:2]
+    out = []
+    for i in root.iter("item"):
+        t = i.findtext("title", "").strip()
+        if t and t not in out:          # the feed lists the same warning once per time period
+            out.append(t)
+    return out[:2]
 
 def moon(now):
     days = (now.astimezone(dt.timezone.utc) - dt.datetime(2000, 1, 6, 18, 14, tzinfo=dt.timezone.utc)).total_seconds() / 86400
@@ -686,8 +691,15 @@ def build(now):
         img = ImageChops.darker(faded, p.img)
         d = ImageDraw.Draw(img)
     # ---- footer: painting note on the left, power + update time on the right
-    upd = (pw_[0] + "  ·  " if pw_ and pw_[0].startswith("No power cuts") else "") + f"Updated {now:%H:%M}"
-    d.text((W - M - p.tw(upd, "small"), H - 28), upd, font=F["small"], fill=GREY)
+    upd = (pw_[0] + "        " if pw_ and pw_[0].startswith("No power cuts") else "") + f"Updated {now:%H:%M}"
+    ux = W - M - p.tw(upd, "small")
+    d.text((ux, H - 28), upd, font=F["small"], fill=GREY)
+    # refresh symbol: tapping the screen refreshes
+    tail = f"Updated {now:%H:%M}"
+    cx, cy, r = W - M - p.tw(tail, "small") - 14, H - 18, 7
+    d.arc((cx - r, cy - r, cx + r, cy + r), 50, 330, fill=GREY, width=2)
+    ax, ay = cx + r * math.cos(math.radians(50)), cy + r * math.sin(math.radians(50))
+    d.polygon([(ax - 1, ay - 6), (ax + 5, ay + 1), (ax - 4, ay + 3)], fill=GREY)
     if a:
         note = p.wrap("Painting: " + caption, "small", W - 2 * M, 1)[0]
         d.text((M, H - 52), note, font=F["small"], fill=GREY)
