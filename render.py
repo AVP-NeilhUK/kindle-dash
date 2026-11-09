@@ -36,8 +36,8 @@ BIN_ANCHOR = dt.date(2026, 11, 12)
 FRONTLIGHT = {"night": 0, "dawn": 12, "twilight": 8, "day": 0, "evening": 10}
 NIGHT_FROM, NIGHT_UNTIL = 23, 6       # hours: light off overnight
 
-# Painting of the day, faded behind the dashboard (Met Museum public-domain collection).
-ART_QUERY = "landscape"        # what to search the Met's European Paintings for
+# Painting of the day, faded behind the dashboard (Cleveland Museum of Art, public domain).
+ART_QUERY = "landscape"        # what to search the Cleveland Museum's paintings for
 ART_STRENGTH = 0.22             # 0 = invisible, 1 = full strength
 
 W, H = 758, 1024
@@ -302,21 +302,22 @@ def light_level(now, w):
     return FRONTLIGHT["evening"]
 
 def art(now):
-    """Painting of the day: (greyscale image, caption). Same painting all day."""
-    base = "https://collectionapi.metmuseum.org/public/collection/v1"
-    ids = get(f"{base}/search", params={"q": ART_QUERY, "hasImages": "true", "departmentId": 11}).json().get("objectIDs") or []
-    if not ids:
+    """Painting of the day from the Cleveland Museum of Art (public domain): (greyscale image, caption)."""
+    base = "https://openaccess-api.clevelandart.org/api/artworks/"
+    q = {"q": ART_QUERY, "type": "Painting", "cc0": 1, "has_image": 1, "limit": 1}
+    total = get(base, params=q).json()["info"]["total"]
+    if not total:
         raise RuntimeError("no artworks found")
-    start = (now.timetuple().tm_yday * 37) % len(ids)
-    for k in range(12):                      # skip any without a usable public-domain image
-        o = get(f"{base}/objects/{ids[(start + k) % len(ids)]}").json()
-        url = o.get("primaryImageSmall") or o.get("primaryImage")
-        if o.get("isPublicDomain") and url:
+    start = (now.timetuple().tm_yday * 37) % total     # same painting all day
+    for k in range(5):
+        d = get(base, params={**q, "skip": (start + k) % total}).json()["data"][0]
+        url = ((d.get("images") or {}).get("web") or {}).get("url")
+        if url:
             img = Image.open(io.BytesIO(get(url).content)).convert("L")
-            who = o.get("artistDisplayName") or "Unknown artist"
-            when = o.get("objectDate") or ""
-            return img, f"{o.get('title', 'Untitled')} · {who}" + (f", {when}" if when else "")
-    raise RuntimeError("no public-domain image found")
+            who = ((d.get("creators") or [{}])[0].get("description") or "Unknown artist").split(" (")[0]
+            when = d.get("creation_date") or ""
+            return img, f"{d.get('title', 'Untitled')} · {who}" + (f", {when}" if when else "")
+    raise RuntimeError("no image found")
 
 def time_of_day(h):
     return ("early" if h < 7 else "morning" if h < 12 else "afternoon" if h < 15
