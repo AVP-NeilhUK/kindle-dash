@@ -38,7 +38,7 @@ NIGHT_FROM, NIGHT_UNTIL = 23, 6       # hours: light off overnight
 
 # Painting of the day, faded behind the dashboard (Cleveland Museum of Art, public domain).
 ART_QUERY = "landscape"        # what to search the Cleveland Museum's paintings for
-ART_STRENGTH = 0.22             # 0 = invisible, 1 = full strength
+ART_STRENGTH = 0.32             # 0 = invisible, 1 = full strength
 
 W, H = 758, 1024
 M = 26                    # side margin
@@ -47,7 +47,7 @@ TZ = ZoneInfo("Europe/London")
 UA = {"User-Agent": "kindle-dash/1.0 (personal e-ink dashboard)"}
 MOCK = "--mock" in sys.argv
 LAST_WEATHER = None
-GREY, LIGHT = 90, 200     # secondary text, hairlines
+GREY, LIGHT = 60, 185     # secondary text, hairlines
 
 # ---------------------------------------------------------------- fonts
 # Inter is downloaded by the workflow into fonts/. DejaVu is the fallback.
@@ -69,10 +69,10 @@ def font(size, weight=400):
             return ImageFont.load_default()
 
 F = {
-    "day": font(38, 700), "date": font(22, 400), "pill": font(18, 600),
+    "day": font(38, 700), "date": font(22, 500), "pill": font(18, 600),
     "label": font(14, 700), "temp": font(76, 700), "cond": font(24, 600),
-    "body": font(18, 400), "bodym": font(18, 600), "bodyb": font(18, 700),
-    "small": font(16, 400), "badge": font(15, 700), "year": font(26, 700),
+    "body": font(18, 500), "bodym": font(18, 650), "bodyb": font(18, 700),
+    "small": font(16, 500), "badge": font(15, 700), "year": font(26, 700),
     "alert": font(19, 700), "power": font(22, 700), "tmhead": font(20, 700), "binbig": font(24, 700), "binhead": font(32, 700),
 }
 
@@ -162,11 +162,11 @@ def bins(now):
         hols = get("https://www.gov.uk/bank-holidays.json").json()["england-and-wales"]["events"]
         monday = thu - dt.timedelta(days=3)
         if any(monday <= dt.date.fromisoformat(e["date"]) <= thu for e in hols):
-            note = "Bank holiday week, check the date"
+            note = "Bank holiday this week, collection may be a day late"
     except Exception:
         pass
     if (thu.month == 12 and thu.day >= 18) or (thu.month == 1 and thu.day <= 6):
-        note = "Christmas schedule, check the date"
+        note = "Christmas period, collections may change, check MyDudley"
     state = "tonight" if today.weekday() == 2 else "today" if (today.weekday() == 3 and now.hour < 12) else "next"
     return {"state": state, "date": thu, "items": items, "note": note}
 
@@ -672,7 +672,8 @@ def build(now):
             p.text(txt, x=M + 76)
 
     fu = section(fuel)
-    if fu and p.fits(p.lh("body")):
+    if fu and p.fits(p.lh("body") + 10):
+        p.y += 10                              # small gap: fuel isn't a road item
         p.badge(M, p.y, "Fuel")
         p.text("Cheapest: " + "  ·  ".join(fu), x=M + 76, max_lines=2)
 
