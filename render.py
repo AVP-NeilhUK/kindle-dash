@@ -38,7 +38,7 @@ NIGHT_FROM, NIGHT_UNTIL = 23, 6       # hours: light off overnight
 
 # Painting of the day, faded behind the dashboard (Cleveland Museum of Art, public domain).
 ART_QUERY = "landscape"        # what to search the Cleveland Museum's paintings for
-ART_STRENGTH = 0.32             # 0 = invisible, 1 = full strength
+ART_STRENGTH = 0.42             # 0 = invisible, 1 = full strength
 
 W, H = 758, 1024
 M = 26                    # side margin
@@ -70,7 +70,7 @@ def font(size, weight=400):
 
 F = {
     "day": font(38, 700), "date": font(22, 500), "pill": font(18, 600),
-    "label": font(14, 700), "temp": font(76, 700), "cond": font(24, 600),
+    "label": font(14, 700), "strip": font(15, 600), "stript": font(19, 700), "temp": font(76, 700), "cond": font(24, 600),
     "body": font(18, 500), "bodym": font(18, 650), "bodyb": font(18, 700),
     "small": font(16, 500), "badge": font(15, 700), "year": font(26, 700),
     "alert": font(19, 700), "power": font(22, 700), "tmhead": font(20, 700), "binbig": font(24, 700), "binhead": font(32, 700),
@@ -111,7 +111,7 @@ def weather(now):
         "latitude": LAT, "longitude": LON, "timezone": "Europe/London", "forecast_days": 2,
         "wind_speed_unit": "mph",
         "current": "temperature_2m,weather_code,is_day",
-        "hourly": "precipitation_probability,precipitation",
+        "hourly": "precipitation_probability,precipitation,temperature_2m,weather_code,is_day",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset,wind_speed_10m_max",
     }).json()
     c, d, h = j["current"], j["daily"], j["hourly"]
@@ -129,7 +129,24 @@ def weather(now):
     day = lambda k: {"code": d["weather_code"][k], "text": WMO.get(d["weather_code"][k], "?"),
                      "hi": round(d["temperature_2m_max"][k]), "lo": round(d["temperature_2m_min"][k]),
                      "rain": d["precipitation_probability_max"][k] or 0, "wind": round(d["wind_speed_10m_max"][k])}
-    return {"now_t": round(c["temperature_2m"]), "now_code": c["weather_code"], "night": not c.get("is_day", 1),
+    # forecast strips: worst weather in each block, temperature, highest rain chance
+    def block(ix, label):
+        ix = [i for i in ix if 0 <= i < len(h["time"])]
+        if not ix:
+            return None
+        return {"label": label, "code": max(h["weather_code"][i] for i in ix),
+                "night": not h["is_day"][ix[0]],
+                "t": round(sum(h["temperature_2m"][i] for i in ix) / len(ix)),
+                "rain": max(h["precipitation_probability"][i] or 0 for i in ix)}
+    pos = {t: i for i, t in enumerate(h["time"])}
+    i0 = pos.get(now.strftime("%Y-%m-%dT%H:00"), 0)
+    hours = [block([i0 + 2 * k, i0 + 2 * k + 1], "Now" if k == 0 else h["time"][i0 + 2 * k][11:16])
+             for k in range(6)]
+    tmr = (now.date() + dt.timedelta(days=1)).isoformat()
+    t0 = pos.get(tmr + "T00:00", 24)
+    parts = [block(range(t0 + 6 * k, t0 + 6 * k + 6), n) for k, n in enumerate(("Night", "Morn", "Aft", "Eve"))]
+    return {"hours": [b for b in hours if b], "tm_parts": [b for b in parts if b],
+            "now_t": round(c["temperature_2m"]), "now_code": c["weather_code"], "night": not c.get("is_day", 1),
             "today": day(0), "tomorrow": day(1), "rain": rain,
             "sunrise": d["sunrise"][0][11:16], "sunset": d["sunset"][0][11:16]}
 
@@ -614,14 +631,31 @@ def build(now):
         # tomorrow column
         tm = w["tomorrow"]
         rx = split + 18
-        d.line((split, top, split, p.y - 4), fill=LIGHT, width=2)
         d.text((rx, top - 2), "Tomorrow", font=F["tmhead"], fill=0)
         p.img.paste(draw_icon(icon_kind(tm["code"]), 56), (rx, top + 28))
         d.text((rx + 66, top + 32), f"{tm['hi']}° / {tm['lo']}°", font=F["bodyb"], fill=0)
         d.text((rx + 66, top + 56), f"Rain {tm['rain']}%", font=F["body"], fill=GREY)
         tt = p.wrap(tm["text"], "body", W - M - rx, 1)[0]
         d.text((rx, top + 92), tt, font=F["body"], fill=0)
-        p.y = max(p.y, top + 120) + 2
+        p.y = max(p.y, top + 120) + 12
+        # forecast strips: next 12 hours under today, 6-hour blocks under tomorrow
+        sy = p.y
+        def strip(blocks, x0, x1, isz):
+            if not blocks:
+                return
+            cw = (x1 - x0) / len(blocks)
+            for k, b in enumerate(blocks):
+                cx = x0 + cw * k + cw / 2
+                d.text((cx, sy), b["label"], font=F["strip"], fill=GREY, anchor="mt")
+                p.img.paste(draw_icon(icon_kind(b["code"], b["night"]), isz), (int(cx - isz / 2), sy + 20))
+                d.text((cx, sy + 24 + isz), f"{b['t']}°", font=F["stript"], fill=0, anchor="mt")
+                d.text((cx, sy + 48 + isz), f"{b['rain']}%", font=F["strip"], fill=GREY, anchor="mt")
+                if k:
+                    d.line((x0 + cw * k, sy + 4, x0 + cw * k, sy + 62 + isz), fill=LIGHT, width=1)
+        strip(w.get("hours", []), M, split - 8, 36)
+        strip(w.get("tm_parts", []), split + 8, W - M, 36)
+        d.line((split, top, split, sy + 98), fill=LIGHT, width=2)
+        p.y = sy + 106
         p.text(f"Sunrise {w['sunrise']}  ·  Sunset {w['sunset']}  ·  {moon(now)}", "small", fill=GREY)
     else:
         p.text("Weather unavailable")
@@ -735,7 +769,11 @@ MOCK_DATA = {
     "warnings": ["Yellow warning of fog affecting West Midlands"],
     "bins": {"state": "tonight", "date": dt.date(2026, 11, 12), "items": ["Black", "Green", "Food"], "note": ""},
     "weather": {"now_t": 6, "now_code": 2, "night": False, "rain": "Dry until 15:00, then rain likely",
-                "today": {"code": 80, "text": "Light showers", "hi": 10, "lo": 4, "rain": 70, "wind": 18},
+                "hours": [{"label": l, "code": c, "night": False, "t": t, "rain": r} for l, c, t, r in
+                  [("Now", 2, 6, 10), ("09:00", 3, 7, 20), ("11:00", 61, 8, 70), ("13:00", 61, 9, 80), ("15:00", 3, 9, 40), ("17:00", 2, 7, 10)]],
+        "tm_parts": [{"label": l, "code": c, "night": l == "Night", "t": t, "rain": r} for l, c, t, r in
+                     [("Night", 45, 2, 0), ("Morn", 45, 5, 5), ("Aft", 51, 9, 30), ("Eve", 3, 6, 10)]],
+        "today": {"code": 80, "text": "Light showers", "hi": 10, "lo": 4, "rain": 70, "wind": 18},
                 "tomorrow": {"code": 45, "text": "Fog", "hi": 9, "lo": 2, "rain": 10, "wind": 6},
                 "sunrise": "07:17", "sunset": "16:26"},
     "trains": ([("07:41", "Birmingham Snow Hill", "On time"), ("07:52", "Kidderminster", "07:58"),
