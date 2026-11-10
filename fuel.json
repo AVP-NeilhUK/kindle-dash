@@ -1,13 +1,13 @@
 {
-    "updated":  "2026-11-10T08:58:27.5152606Z",
-    "forecourts":  8092,
+    "updated":  "2026-11-10T09:58:27.5881625Z",
+    "forecourts":  8091,
     "fuel_types":  {
                        "HVO":  55,
-                       "B7_STANDARD":  7996,
-                       "E10":  7877,
+                       "B7_STANDARD":  7995,
+                       "E10":  7876,
                        "B10":  62,
-                       "B7_PREMIUM":  4146,
-                       "E5":  6231
+                       "B7_PREMIUM":  4145,
+                       "E5":  6230
                    },
     "diesel":  {
                    "price":  158.7,
@@ -17,8 +17,8 @@
                    "km":  0
                },
     "priced":  {
-                   "diesel":  7996,
-                   "unleaded":  7877
+                   "diesel":  7995,
+                   "unleaded":  7876
                },
     "unleaded":  {
                      "price":  142.9,
