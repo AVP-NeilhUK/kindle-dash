@@ -1,12 +1,30 @@
 {
+    "updated":  "2026-11-10T08:04:58.7636760Z",
+    "forecourts":  8092,
+    "fuel_types":  {
+                       "HVO":  55,
+                       "B7_STANDARD":  7996,
+                       "E10":  7877,
+                       "B10":  62,
+                       "B7_PREMIUM":  4146,
+                       "E5":  6231
+                   },
     "diesel":  {
-                   "price":  195.9,
-                   "brand":  "Texaco"
+                   "price":  158.7,
+                   "brand":  "Belcoo Service Station",
+                   "name":  "Belcoo Service Station",
+                   "place":  "Enniskillen",
+                   "km":  0
                },
-    "forecourts":  19,
-    "updated":  "2026-11-10T07:58:22.1527646Z",
+    "priced":  {
+                   "diesel":  7996,
+                   "unleaded":  7877
+               },
     "unleaded":  {
-                     "price":  165.7,
-                     "brand":  "Asda Barnes Hill Superstore"
+                     "price":  142.9,
+                     "brand":  "Ravenspoint Trading Ltd",
+                     "name":  "Ravenspoint Trading Ltd",
+                     "place":  "Isle Of Lewis",
+                     "km":  0
                  }
 }
