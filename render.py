@@ -207,10 +207,16 @@ def tomtom(bbox):
 def describe(p, local=False):
     """Returns (badge, text)."""
     roads = [r for r in (p.get("roadNumbers") or []) if not r.upper().startswith("E")]
+    fr, to = (p.get("from") or "").strip(), (p.get("to") or "").strip()
+    if not roads and fr.upper() in MOTORWAYS:
+        roads = [fr.upper()]
     badge = roads[0] if roads else ("Local" if local else "")
     ev = "; ".join(e["description"] for e in (p.get("events") or []))
     ev = ev.replace("Closed; Roadworks", "Closed for roadworks")
-    where = " to ".join(x for x in (p.get("from"), p.get("to")) if x)
+    if fr and fr == to:
+        where = f"on the {fr}" if fr.upper() in MOTORWAYS else f"on {fr}"
+    else:
+        where = " to ".join(x for x in (fr, to) if x)
     mins = round((p.get("delay") or 0) / 60)
     delay = f", +{mins} min" if mins >= 1 else ""
     return badge, f"{ev}: {where}{delay}" if where else f"{ev}{delay}"
@@ -220,7 +226,11 @@ def roads():
     if mw is None:
         return None
     def is_mw(p):
-        return any(r.upper().replace(" TOLL", "") in MOTORWAYS for r in (p.get("roadNumbers") or []))
+        if any(r.upper().replace(" TOLL", "") in MOTORWAYS for r in (p.get("roadNumbers") or [])):
+            return True
+        # junction links often have no road number, only "M5 to M5"
+        ends = {(p.get("from") or "").strip().upper(), (p.get("to") or "").strip().upper()}
+        return bool(ends) and ends <= set(MOTORWAYS)
     rank = lambda p: (p.get("iconCategory") != 8, p.get("iconCategory") != 1, -(p.get("magnitudeOfDelay") or 0))
     def dedupe(items):
         seen, out = set(), []
@@ -273,7 +283,13 @@ def fuel():
     def short(name):
         name = re.sub(r"\b(ltd|limited|plc|llp|trading|services?|stations?|filling|garage|retail|uk|group|petroleum|stores)\b\.?", "", name, flags=re.I)
         return re.sub(r"\s+", " ", name).strip(" ,&-") or name
-    parts = [f"{k.title()} {j[k]['price']:.1f}p {short(j[k]['brand'])}" for k in ("unleaded", "diesel") if j.get(k)]
+    def where(e):
+        name = short(e.get("name") or e["brand"])
+        place = (e.get("place") or "").strip()
+        if place and place.lower() not in name.lower():
+            name += f", {place}"
+        return name + (f" ({e['km']:.1f} km)" if e.get("km") is not None else "")
+    parts = [f"{k.title()} {j[k]['price']:.1f}p {where(j[k])}" for k in ("unleaded", "diesel") if j.get(k)]
     if parts and age > dt.timedelta(hours=2):
         parts[-1] += f" (as of {dt.datetime.fromisoformat(j['updated'].replace('Z', '+00:00')).astimezone(TZ):%H:%M})"
     return parts or None
