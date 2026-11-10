@@ -1,5 +1,5 @@
 {
-    "updated":  "2026-11-10T14:58:22.6327146Z",
+    "updated":  "2026-11-10T15:58:24.8451218Z",
     "forecourts":  19,
     "fuel_types":  {
                        "E10":  19,
@@ -19,7 +19,7 @@
                    "unleaded":  19
                },
     "unleaded":  {
-                     "price":  165.7,
+                     "price":  164.7,
                      "brand":  "ASDA BARNES HILL SUPERSTORE",
                      "name":  "Asda Barnes Hill Superstore",
                      "place":  "Birmingham",
