@@ -1,5 +1,5 @@
 {
-    "updated":  "2026-11-11T17:58:22.4615032Z",
+    "updated":  "2026-11-11T21:21:15.0590905Z",
     "forecourts":  19,
     "fuel_types":  {
                        "E10":  19,
@@ -8,18 +8,18 @@
                        "B7_PREMIUM":  16
                    },
     "diesel":  {
-                   "price":  195.9,
-                   "brand":  "TEXACO",
-                   "name":  "Withymoor Service Station",
-                   "place":  "Dudley",
-                   "km":  4.3
+                   "price":  194.7,
+                   "brand":  "ASDA BARNES HILL SUPERSTORE",
+                   "name":  "Asda Barnes Hill Superstore",
+                   "place":  "Birmingham",
+                   "km":  5
                },
     "priced":  {
                    "diesel":  18,
                    "unleaded":  19
                },
     "unleaded":  {
-                     "price":  164.7,
+                     "price":  163.7,
                      "brand":  "ASDA BARNES HILL SUPERSTORE",
                      "name":  "Asda Barnes Hill Superstore",
                      "place":  "Birmingham",
