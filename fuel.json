@@ -1,5 +1,5 @@
 {
-    "updated":  "2026-11-24T12:58:24.1183610Z",
+    "updated":  "2026-11-24T13:58:24.3720068Z",
     "forecourts":  19,
     "fuel_types":  {
                        "E10":  19,
@@ -8,7 +8,7 @@
                        "B7_PREMIUM":  16
                    },
     "diesel":  {
-                   "price":  186.7,
+                   "price":  185.7,
                    "brand":  "ASDA BARNES HILL SUPERSTORE",
                    "name":  "Asda Barnes Hill Superstore",
                    "place":  "Birmingham",
@@ -19,10 +19,10 @@
                    "unleaded":  19
                },
     "unleaded":  {
-                     "price":  156.9,
-                     "brand":  "TEXACO",
-                     "name":  "Mfg Brandhall",
-                     "place":  "Oldbury",
-                     "km":  4.1
+                     "price":  156.7,
+                     "brand":  "ASDA BARNES HILL SUPERSTORE",
+                     "name":  "Asda Barnes Hill Superstore",
+                     "place":  "Birmingham",
+                     "km":  5
                  }
 }
