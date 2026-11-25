@@ -1,5 +1,5 @@
 {
-    "updated":  "2026-11-25T05:58:21.1333741Z",
+    "updated":  "2026-11-25T21:10:50.1432066Z",
     "forecourts":  19,
     "fuel_types":  {
                        "E10":  19,
@@ -8,7 +8,7 @@
                        "B7_PREMIUM":  16
                    },
     "diesel":  {
-                   "price":  185.7,
+                   "price":  184.7,
                    "brand":  "ASDA BARNES HILL SUPERSTORE",
                    "name":  "Asda Barnes Hill Superstore",
                    "place":  "Birmingham",
@@ -19,10 +19,10 @@
                    "unleaded":  19
                },
     "unleaded":  {
-                     "price":  155.9,
-                     "brand":  "JET",
-                     "name":  "Mfg Pedmore",
-                     "place":  "Pedmore Fields / Stourbridge",
-                     "km":  4.6
+                     "price":  155.7,
+                     "brand":  "ASDA BARNES HILL SUPERSTORE",
+                     "name":  "Asda Barnes Hill Superstore",
+                     "place":  "Birmingham",
+                     "km":  5
                  }
 }
